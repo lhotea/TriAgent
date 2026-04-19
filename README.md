@@ -56,14 +56,18 @@ python -m triagent             # publishes
 
 ### Public image host
 
-The Graph API fetches the image by URL — it does **not** accept base64. Host
-`assets/daily.png` somewhere public (S3, Cloudflare R2, GitHub Pages on this
-repo, a VPS). Point `PUBLIC_IMAGE_BASE_URL` at the directory that serves it.
-The agent builds the URL as `{PUBLIC_IMAGE_BASE_URL}/daily.png`.
+The Graph API fetches the image by URL — it does **not** accept base64. The
+bundled GitHub Actions workflow pushes `assets/daily.png` to a `gh-pages`
+branch on every run. Enable GitHub Pages on this repo (Settings → Pages →
+Source: `gh-pages` branch, root), then set:
 
-If you run on GitHub Actions, one common pattern: commit the rendered card
-back to a `gh-pages` branch in a separate step, then set
-`PUBLIC_IMAGE_BASE_URL=https://<user>.github.io/triagent`.
+```
+PUBLIC_IMAGE_BASE_URL=https://<user>.github.io/<repo>
+```
+
+Running outside Actions? Host `daily.png` anywhere public (S3, Cloudflare R2,
+a VPS) and point `PUBLIC_IMAGE_BASE_URL` at the directory. The agent builds
+the full URL as `{PUBLIC_IMAGE_BASE_URL}/daily.png`.
 
 ## Scheduling
 

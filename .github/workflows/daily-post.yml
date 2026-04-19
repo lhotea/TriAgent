@@ -11,6 +11,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write  # needed to push rendered card to gh-pages
+
 jobs:
   post:
     runs-on: ubuntu-latest
@@ -23,9 +26,48 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - name: Install TriAgent
+        run: pip install -e .
 
-      - name: Run TriAgent
+      - name: Build card + caption
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Publisher credentials are unused in build mode, but Settings.from_env()
+          # validates their presence. Use placeholders.
+          IG_USER_ID: "0"
+          IG_ACCESS_TOKEN: "placeholder"
+          PUBLIC_IMAGE_BASE_URL: ${{ secrets.PUBLIC_IMAGE_BASE_URL }}
+          LINK_IN_BIO_URL: ${{ secrets.LINK_IN_BIO_URL }}
+          AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
+          BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
+          BRAND_NAME: ${{ vars.BRAND_NAME }}
+        run: python -m triagent --mode build
+
+      - name: Publish card to gh-pages
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          test -f assets/daily.png || { echo "card missing"; exit 1; }
+          git fetch origin gh-pages || true
+          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            git worktree add -B gh-pages gh-pages-wt origin/gh-pages
+          else
+            git worktree add --orphan -b gh-pages gh-pages-wt
+          fi
+          cp assets/daily.png gh-pages-wt/daily.png
+          cd gh-pages-wt
+          git config user.email "actions@github.com"
+          git config user.name "TriAgent Bot"
+          git add daily.png
+          git commit -m "card: $(date -u +%F)" || echo "no changes"
+          git push origin gh-pages
+
+      - name: Wait for GitHub Pages to serve new card
+        if: ${{ !inputs.dry_run }}
+        run: sleep 45
+
+      - name: Publish to Instagram
+        if: ${{ !inputs.dry_run }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
@@ -35,13 +77,14 @@ jobs:
           AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}
-        run: |
-          python -m triagent ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: python -m triagent --mode publish
 
       - name: Upload rendered card
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: daily-card
-          path: assets/daily.png
+          path: |
+            assets/daily.png
+            assets/caption.txt
           if-no-files-found: ignore

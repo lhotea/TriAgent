@@ -4,16 +4,26 @@ import argparse
 import logging
 import sys
 
-from .agent import run
+from .agent import build, publish_from_build, run
 from .config import Settings
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="triagent")
     parser.add_argument(
+        "--mode",
+        choices=["full", "build", "publish"],
+        default="full",
+        help=(
+            "full: build + publish in one process. "
+            "build: fetch news, render card, write caption to disk, do not post. "
+            "publish: read prebuilt card + caption from disk and post to Instagram."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Build the post but skip publishing to Instagram.",
+        help="(full mode only) build the post but skip publishing to Instagram.",
     )
     parser.add_argument(
         "--log-level",
@@ -32,6 +42,16 @@ def main() -> int:
     except RuntimeError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.mode == "build":
+        build(settings)
+        print("build complete. card + caption ready in assets/.")
+        return 0
+
+    if args.mode == "publish":
+        result = publish_from_build(settings)
+        print(f"published: https://www.instagram.com/p/{result.media_id}/")
+        return 0
 
     result = run(settings, dry_run=args.dry_run)
     if result.media_id:
