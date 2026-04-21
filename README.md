@@ -74,11 +74,10 @@ the full URL as `{PUBLIC_IMAGE_BASE_URL}/daily.png`.
 A GitHub Actions workflow (`.github/workflows/daily-post.yml`) runs the agent
 daily at 13:00 UTC. Add these repo secrets:
 
-- `ANTHROPIC_API_KEY`
-- `IG_USER_ID`
-- `IG_ACCESS_TOKEN`
-- `PUBLIC_IMAGE_BASE_URL`
-- `LINK_IN_BIO_URL`
+- `ANTHROPIC_API_KEY` (required — build fails without it)
+- `IG_USER_ID` (required for publish)
+- `IG_ACCESS_TOKEN` (required for publish)
+- `PUBLIC_IMAGE_BASE_URL` (required for publish)
 - `AFFILIATE_URLS` (optional)
 
 And these repo variables:

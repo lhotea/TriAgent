@@ -32,12 +32,7 @@ jobs:
       - name: Build card + caption
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Publisher credentials are unused in build mode, but Settings.from_env()
-          # validates their presence. Use placeholders.
-          IG_USER_ID: "0"
-          IG_ACCESS_TOKEN: "placeholder"
           PUBLIC_IMAGE_BASE_URL: ${{ secrets.PUBLIC_IMAGE_BASE_URL }}
-          LINK_IN_BIO_URL: ${{ secrets.LINK_IN_BIO_URL }}
           AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}
@@ -73,7 +68,6 @@ jobs:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           PUBLIC_IMAGE_BASE_URL: ${{ secrets.PUBLIC_IMAGE_BASE_URL }}
-          LINK_IN_BIO_URL: ${{ secrets.LINK_IN_BIO_URL }}
           AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}

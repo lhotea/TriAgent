@@ -23,6 +23,9 @@ class RunResult:
 
 
 def _image_url(settings: Settings) -> str:
+    if not settings.public_image_base_url:
+        # Build mode can run without this — it's only informational until publish.
+        return f"<unset>/{settings.image_path.name}"
     return f"{settings.public_image_base_url}/{settings.image_path.name}"
 
 
@@ -72,9 +75,12 @@ def publish_from_build(settings: Settings) -> RunResult:
             f"no rendered card at {settings.image_path}; run build step first"
         )
 
+    settings.require_publish_config()
+
     caption = caption_path.read_text(encoding="utf-8")
     image_url = _image_url(settings)
 
+    assert settings.ig_user_id and settings.ig_access_token  # checked above
     publisher = InstagramPublisher(
         ig_user_id=settings.ig_user_id, access_token=settings.ig_access_token
     )
@@ -93,6 +99,8 @@ def run(settings: Settings, *, dry_run: bool = False) -> RunResult:
             log.info("brief:\n%s", json.dumps(result.brief.model_dump(), indent=2))
         return result
 
+    settings.require_publish_config()
+    assert settings.ig_user_id and settings.ig_access_token  # checked above
     publisher = InstagramPublisher(
         ig_user_id=settings.ig_user_id, access_token=settings.ig_access_token
     )
