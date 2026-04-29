@@ -9,15 +9,15 @@ from .config import Settings
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="triagent")
+    parser = argparse.ArgumentParser(prog="aigent")
     parser.add_argument(
         "--mode",
         choices=["full", "build", "publish"],
         default="full",
         help=(
             "full: build + publish in one process. "
-            "build: fetch news, render card, write caption to disk, do not post. "
-            "publish: read prebuilt card + caption from disk and post to Instagram."
+            "build: fetch launches, render the 5-slide carousel, write caption to disk. "
+            "publish: read prebuilt slides + caption from disk and post the carousel."
         ),
     )
     parser.add_argument(
@@ -45,7 +45,7 @@ def main() -> int:
 
     if args.mode == "build":
         build(settings)
-        print("build complete. card + caption ready in assets/.")
+        print("build complete. carousel slides + caption ready in assets/.")
         return 0
 
     if args.mode == "publish":
@@ -57,7 +57,7 @@ def main() -> int:
     if result.media_id:
         print(f"published: https://www.instagram.com/p/{result.media_id}/")
     else:
-        print("dry-run complete. caption and image ready in assets/.")
+        print("dry-run complete. carousel slides and caption ready in assets/.")
     return 0
 
 

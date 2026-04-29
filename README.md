@@ -1,36 +1,63 @@
-# TriAgent
+# aigent — daily AI tool drops, on autopilot
 
-Daily triathlon news agent that publishes an engagement-optimized post to Instagram.
-Built with Claude Opus 4.7 (structured output + adaptive thinking), PIL for the image
-card, and the Instagram Graph API for publishing.
+A faceless Instagram channel that posts one AI tool per day as a 5-slide
+carousel. Built with Claude Opus 4.7 (structured output + adaptive thinking),
+PIL for the slides, and the Instagram Graph API for publishing.
+
+The whole pipeline is monetization-shaped: every post pushes affiliate links
+to the featured tool, a newsletter signup, and a paid prompt pack on Gumroad —
+the three highest-RPM levers a faceless AI channel actually has.
 
 ## What it does
 
 Every day:
 
-1. Pulls the last 36 hours of triathlon news from a curated set of RSS feeds
-   (Triathlete, Slowtwitch, Tri247, World Triathlon, …).
-2. Sends the raw headlines to Claude, which ranks them for Instagram engagement
-   value and returns a structured brief: hook, rewritten headlines, caption body,
-   engagement prompt, and hashtags.
-3. Renders a 1080×1350 branded image card (PIL) with the hook + top 3 headlines.
-4. Uploads the card to a public image host, then publishes via the Graph API's
-   two-step container flow.
-5. Rotates affiliate signals through the caption + link-in-bio.
+1. Pulls the last 36 hours of AI launches from Product Hunt's AI/Dev Tools
+   RSS feeds and Show-HN (filtered for AI keywords).
+2. Sends the candidate launches to Claude, which **picks one tool** and
+   returns a structured 5-slide carousel brief: cover hook, what it does,
+   killer use-case (with a copy-paste prompt or 3-step workflow), pricing
+   verdict, and a CTA slide.
+3. Renders five 1080×1350 branded slides with PIL — different layout per
+   role, fixed brand mark, slide indicator dots.
+4. Assembles a caption with the hook, body, engagement question, and a
+   monetization CTA stack (newsletter + prompt pack + tool affiliate).
+5. Uploads all five slides to a public image host, then publishes a
+   carousel via the Graph API's child-container flow.
 
-## Ad revenue — how the money actually flows
+## Why this niche
 
-Instagram does not pay per post. Direct monetization on this account comes from:
+Faceless AI-tools content is the highest-RPM category a new IG channel can
+realistically enter right now:
 
-- **Affiliate links** in the link-in-bio landing page (primary).
-- **Sponsored posts / brand deals** — priced on engagement, so every reply,
-  save, and share compounds future rate-card value.
-- **Reels Play bonuses** (invitation-based, secondary).
+- **Affiliate payouts** for AI SaaS are 3–5× lifestyle/fitness affiliates —
+  20–50% recurring or $30–$100 per signup is normal.
+- **Content supply is endless** — Product Hunt + HN drop new launches daily,
+  exactly the cadence Instagram rewards.
+- **Format fits faceless** — screen-recordings, prompt screenshots, and text
+  cards do better than face cams in this niche.
+- **No FTC/regulatory minefield** like personal finance or supplements.
 
-Everything in the agent points at the same lever: **engagement**. The Claude
-prompt is tuned to pick headlines that trigger identification and debate over
-neutral reporting; the caption always ends with an engagement prompt to pull
-comments, which the algorithm rewards with reach.
+## Revenue plumbing
+
+The caption is built around three monetization slots, all optional. Anything
+not configured is silently dropped:
+
+| Slot           | Env var          | What it does                                                      |
+|----------------|------------------|-------------------------------------------------------------------|
+| Affiliate link | `AFFILIATE_LINKS`| `slug=url` map. Only attaches when the chosen tool's slug matches.|
+| Newsletter     | `NEWSLETTER_URL` | Adds a "daily AI tools in your inbox" CTA pointing to link-in-bio.|
+| Prompt pack    | `GUMROAD_URL`    | Adds a "prompt pack pinned in our bio" CTA.                       |
+
+IG strips URLs from captions, so all clickable links live on your
+link-in-bio landing page (Linktree / Beacons / a static page on the same
+GitHub Pages site that hosts the slides). Update that page when the
+featured tool changes — the channel mentions it by name in the caption.
+
+The `AFFILIATE_LINKS` map is intentionally strict: it only attaches an
+affiliate URL when the chosen tool's slug matches an entry. We do **not**
+fall through to a "featured deal" on an unrelated tool — that misaligned
+promotion is the fastest way to tank CTR and trust on a new account.
 
 ## Setup
 
@@ -40,9 +67,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # Fill in the secrets
-python -m triagent --dry-run   # builds the post, skips publishing
-python -m triagent             # publishes
+python -m aigent --dry-run   # builds slides + caption, skips publishing
+python -m aigent             # publishes
 ```
+
+After a dry-run, inspect `assets/daily_1.png` … `assets/daily_5.png` and
+`assets/caption.txt`.
 
 ### Instagram Graph API prerequisites
 
@@ -54,33 +84,54 @@ python -m triagent             # publishes
 4. Find your IG Business Account ID:
    `GET https://graph.facebook.com/v20.0/{page-id}?fields=instagram_business_account`.
 
-### Public image host
+### Public image host (for the carousel)
 
-The Graph API fetches the image by URL — it does **not** accept base64. The
-bundled GitHub Actions workflow pushes `assets/daily.png` to a `gh-pages`
-branch on every run. Enable GitHub Pages on this repo (Settings → Pages →
-Source: `gh-pages` branch, root), then set:
+The Graph API fetches each slide by URL — base64 is not supported. The
+bundled GitHub Actions workflow pushes `assets/daily_1.png` …
+`daily_5.png` to a `gh-pages` branch on every run. Enable GitHub Pages on
+this repo (Settings → Pages → Source: `gh-pages` branch, root), then set:
 
 ```
 PUBLIC_IMAGE_BASE_URL=https://<user>.github.io/<repo>
 ```
 
-Running outside Actions? Host `daily.png` anywhere public (S3, Cloudflare R2,
-a VPS) and point `PUBLIC_IMAGE_BASE_URL` at the directory. The agent builds
-the full URL as `{PUBLIC_IMAGE_BASE_URL}/daily.png`.
+Running outside Actions? Host the slide PNGs anywhere public (S3,
+Cloudflare R2, a VPS) and point `PUBLIC_IMAGE_BASE_URL` at the directory.
+
+### Affiliate program signups (do this once)
+
+The channel earns nothing until you've registered for affiliate programs
+and added the codes to `AFFILIATE_LINKS`. Realistic starter set, all
+genuinely run affiliate programs as of writing:
+
+- Cursor, Perplexity Pro, ElevenLabs, Notion, Jasper, Descript, Murf,
+  Runway, Pictory, Otter, Synthesia, Krea, HeyGen.
+- For broader catalog access: Impact, PartnerStack, Rewardful, Reflio.
+
+Map example for `.env`:
+
+```
+AFFILIATE_LINKS=cursor=https://cursor.com/?ref=YOU,perplexity=https://perplexity.ai/pro?referral=YOU,elevenlabs=https://elevenlabs.io/?from=YOU
+```
+
+The slug is matched case-insensitively against either Claude's chosen
+`tool.slug` or a slugified version of `tool.name`. So `perplexity` will
+match a tool named `Perplexity AI` whose slug is `perplexity-ai`.
 
 ## Scheduling
 
-A GitHub Actions workflow (`.github/workflows/daily-post.yml`) runs the agent
-daily at 13:00 UTC. Add these repo secrets:
+The GitHub Actions workflow (`.github/workflows/daily-post.yml`) runs the
+agent daily at 13:00 UTC. Add these repo **secrets**:
 
 - `ANTHROPIC_API_KEY` (required — build fails without it)
 - `IG_USER_ID` (required for publish)
 - `IG_ACCESS_TOKEN` (required for publish)
 - `PUBLIC_IMAGE_BASE_URL` (required for publish)
-- `AFFILIATE_URLS` (optional)
+- `AFFILIATE_LINKS` (optional)
+- `NEWSLETTER_URL` (optional)
+- `GUMROAD_URL` (optional)
 
-And these repo variables:
+And these repo **variables**:
 
 - `BRAND_HANDLE`
 - `BRAND_NAME`
@@ -88,29 +139,31 @@ And these repo variables:
 ## Layout
 
 ```
-src/triagent/
+src/aigent/
 ├── agent.py         # orchestrator
-├── config.py        # Settings, RSS feed list
-├── news.py          # feedparser-based RSS fetcher
-├── summarizer.py    # Claude Opus 4.7 with Pydantic-typed output
-├── image.py         # PIL branded card renderer
-├── monetization.py  # caption assembly, affiliate rotation
-├── publisher.py     # Instagram Graph API two-step publish
+├── config.py        # Settings, RSS feed list, AI keyword filter
+├── news.py          # feedparser-based fetcher (PH + HN)
+├── summarizer.py    # Claude Opus 4.7 with the 5-slide Pydantic schema
+├── image.py         # PIL multi-slide carousel renderer
+├── monetization.py  # caption + affiliate / newsletter / Gumroad CTAs
+├── publisher.py     # Instagram Graph API carousel publish
 └── __main__.py      # CLI entry
 ```
 
 ## Cost
 
-- **Claude**: ~4k input + ~1k output tokens per run → roughly $0.05/day at
-  current Opus 4.7 pricing. Adaptive thinking adds variability; the system
-  prompt is cached (5-minute TTL), so repeated same-day runs hit the cache.
+- **Claude**: ~5k input + ~1.5k output tokens per run → roughly $0.07/day at
+  current Opus 4.7 pricing. The system prompt is cached (5-minute TTL).
 - **Instagram + image hosting**: free at any reasonable volume.
 
 ## Extending
 
-- Swap the PIL card for an AI-generated image (DALL·E, Imagen) — replace
-  `image.py::render_card`.
-- Post as Reels: add a Ken Burns pan + caption overlay via ffmpeg, then hit
-  `/media` with `media_type=REELS` and a `video_url`.
+- Swap a slide for an AI-generated screenshot of the tool (DALL·E, Imagen,
+  Replicate). The renderer accepts any PIL `Image` per-slide.
+- Post Reels too: convert the carousel to a Ken-Burns video with ffmpeg
+  and call `/media` with `media_type=REELS` + a `video_url`.
 - A/B test hooks: generate two briefs, publish one to a shadow account,
-  pick the winner on 4-hour engagement.
+  pick the winner on 4-hour engagement, swap the cover slide on the main
+  account.
+- Track click-through: route every bio CTA through a short.io/short URL so
+  per-CTA click counts are visible in the dashboard.
