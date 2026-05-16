@@ -8,6 +8,8 @@ from email.utils import parsedate_to_datetime
 
 import feedparser
 
+from .config import AI_KEYWORDS
+
 log = logging.getLogger(__name__)
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -33,6 +35,16 @@ def _parse_dt(entry) -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
+def _is_hn_feed(url: str) -> bool:
+    return "hnrss.org" in url
+
+
+def _looks_like_ai(title: str, summary: str) -> bool:
+    """Coarse keyword filter for noisy feeds (HN). Cheaper than sending junk to Claude."""
+    text = f"{title} {summary}".lower()
+    return any(re.search(rf"\b{re.escape(kw)}\b", text) for kw in AI_KEYWORDS)
+
+
 @dataclass
 class NewsItem:
     title: str
@@ -50,8 +62,13 @@ def fetch_recent(
     feed_urls: list[str],
     *,
     max_age_hours: float = 36,
-    per_feed_limit: int = 10,
+    per_feed_limit: int = 15,
 ) -> list[NewsItem]:
+    """Pull recent items across all feeds, dedupe by URL, sort newest-first.
+
+    HN feeds get a coarse AI-keyword pre-screen since they're mixed-topic.
+    Product Hunt's AI-category feed is already on-topic, so we keep everything.
+    """
     now = dt.datetime.now(dt.timezone.utc)
     items: list[NewsItem] = []
     seen_urls: set[str] = set()
@@ -64,6 +81,8 @@ def fetch_recent(
             continue
 
         source = parsed.feed.get("title") or feed_url
+        is_hn = _is_hn_feed(feed_url)
+        kept_from_feed = 0
         for entry in parsed.entries[:per_feed_limit]:
             url = entry.get("link")
             if not url or url in seen_urls:
@@ -76,6 +95,8 @@ def fetch_recent(
             summary = _clean(entry.get("summary", entry.get("description", "")))
             if not title:
                 continue
+            if is_hn and not _looks_like_ai(title, summary):
+                continue
             seen_urls.add(url)
             items.append(
                 NewsItem(
@@ -86,6 +107,8 @@ def fetch_recent(
                     published=published,
                 )
             )
+            kept_from_feed += 1
+        log.info("feed %s: kept %d items", source, kept_from_feed)
 
     items.sort(key=lambda i: i.published, reverse=True)
     log.info("fetched %d items from %d feeds", len(items), len(feed_urls))

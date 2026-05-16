@@ -12,7 +12,7 @@ on:
         default: false
 
 permissions:
-  contents: write  # needed to push rendered card to gh-pages
+  contents: write  # needed to push rendered carousel to gh-pages
 
 jobs:
   post:
@@ -26,59 +26,72 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install TriAgent
+      - name: Install aigent
         run: pip install -e .
 
-      - name: Build card + caption
+      - name: Build carousel + caption
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PUBLIC_IMAGE_BASE_URL: ${{ secrets.PUBLIC_IMAGE_BASE_URL }}
-          AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
+          AFFILIATE_LINKS: ${{ secrets.AFFILIATE_LINKS }}
+          NEWSLETTER_URL: ${{ secrets.NEWSLETTER_URL }}
+          GUMROAD_URL: ${{ secrets.GUMROAD_URL }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}
-        run: python -m triagent --mode build
+        run: python -m aigent --mode build
 
-      - name: Publish card to gh-pages
+      - name: Publish carousel slides to gh-pages
         if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
-          test -f assets/daily.png || { echo "card missing"; exit 1; }
+          # Make sure the renderer wrote all 5 slides.
+          for i in 1 2 3 4 5; do
+            test -f "assets/daily_${i}.png" || { echo "slide ${i} missing"; exit 1; }
+          done
           git fetch origin gh-pages || true
           if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
             git worktree add -B gh-pages gh-pages-wt origin/gh-pages
           else
             git worktree add --orphan -b gh-pages gh-pages-wt
           fi
-          cp assets/daily.png gh-pages-wt/daily.png
+          for i in 1 2 3 4 5; do
+            cp "assets/daily_${i}.png" "gh-pages-wt/daily_${i}.png"
+          done
           cd gh-pages-wt
           git config user.email "actions@github.com"
-          git config user.name "TriAgent Bot"
-          git add daily.png
-          git commit -m "card: $(date -u +%F)" || echo "no changes"
+          git config user.name "aigent Bot"
+          git add daily_1.png daily_2.png daily_3.png daily_4.png daily_5.png
+          git commit -m "carousel: $(date -u +%F)" || echo "no changes"
           git push origin gh-pages
 
-      - name: Wait for GitHub Pages to serve new card
+      - name: Wait for GitHub Pages to serve new slides
         if: ${{ !inputs.dry_run }}
-        run: sleep 45
+        run: sleep 60
 
-      - name: Publish to Instagram
+      - name: Publish carousel to Instagram
         if: ${{ !inputs.dry_run }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           PUBLIC_IMAGE_BASE_URL: ${{ secrets.PUBLIC_IMAGE_BASE_URL }}
-          AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
+          AFFILIATE_LINKS: ${{ secrets.AFFILIATE_LINKS }}
+          NEWSLETTER_URL: ${{ secrets.NEWSLETTER_URL }}
+          GUMROAD_URL: ${{ secrets.GUMROAD_URL }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}
-        run: python -m triagent --mode publish
+        run: python -m aigent --mode publish
 
-      - name: Upload rendered card
+      - name: Upload rendered carousel
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: daily-card
+          name: daily-carousel
           path: |
-            assets/daily.png
+            assets/daily_1.png
+            assets/daily_2.png
+            assets/daily_3.png
+            assets/daily_4.png
+            assets/daily_5.png
             assets/caption.txt
           if-no-files-found: ignore
