@@ -29,6 +29,18 @@ def _image_url(settings: Settings) -> str:
     return f"{settings.public_image_base_url}/{settings.image_path.name}"
 
 
+def _do_publish(settings: Settings, image_url: str, caption: str) -> str:
+    """Shared helper: create publisher, wait for image, publish to Instagram."""
+    assert settings.ig_user_id and settings.ig_access_token  # checked by caller
+    publisher = InstagramPublisher(
+        ig_user_id=settings.ig_user_id, access_token=settings.ig_access_token
+    )
+    log.info("waiting for image URL to be reachable: %s", image_url)
+    publisher.wait_for_image(image_url)
+    media_id = publisher.publish(image_url=image_url, caption=caption)
+    return media_id
+
+
 def build(settings: Settings) -> RunResult:
     """Fetch news, build brief, render card, write caption next to card.
 
@@ -80,11 +92,7 @@ def publish_from_build(settings: Settings) -> RunResult:
     caption = caption_path.read_text(encoding="utf-8")
     image_url = _image_url(settings)
 
-    assert settings.ig_user_id and settings.ig_access_token  # checked above
-    publisher = InstagramPublisher(
-        ig_user_id=settings.ig_user_id, access_token=settings.ig_access_token
-    )
-    media_id = publisher.publish(image_url=image_url, caption=caption)
+    media_id = _do_publish(settings, image_url, caption)
     return RunResult(brief=None, caption=caption, image_url=image_url, media_id=media_id)
 
 
@@ -100,11 +108,8 @@ def run(settings: Settings, *, dry_run: bool = False) -> RunResult:
         return result
 
     settings.require_publish_config()
-    assert settings.ig_user_id and settings.ig_access_token  # checked above
-    publisher = InstagramPublisher(
-        ig_user_id=settings.ig_user_id, access_token=settings.ig_access_token
-    )
-    media_id = publisher.publish(image_url=result.image_url, caption=result.caption)
+
+    media_id = _do_publish(settings, result.image_url, result.caption)
     return RunResult(
         brief=result.brief,
         caption=result.caption,

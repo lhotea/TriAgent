@@ -4,11 +4,22 @@ import logging
 import time
 
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_delay,
+    stop_after_attempt,
+    wait_exponential,
+    wait_fixed,
+)
 
 log = logging.getLogger(__name__)
 
 GRAPH = "https://graph.facebook.com/v20.0"
+
+
+class ImageNotReady(Exception):
+    """Raised when an image URL has not yet returned HTTP 200."""
 
 
 class InstagramPublisher:
@@ -22,6 +33,49 @@ class InstagramPublisher:
     def __init__(self, ig_user_id: str, access_token: str):
         self.ig_user_id = ig_user_id
         self.access_token = access_token
+
+    def _check_image(self, image_url: str, *, head_unsupported: list[bool]) -> None:
+        """Check whether the image URL is reachable; raise ImageNotReady if not."""
+        # Try HEAD first (cheap), fall back to GET if the server doesn't support HEAD.
+        if head_unsupported[0]:
+            r = requests.get(image_url, timeout=5)
+        else:
+            r = requests.head(image_url, timeout=5)
+            if r.status_code == 405:
+                head_unsupported[0] = True
+                log.debug("HEAD not supported, falling back to GET")
+                r = requests.get(image_url, timeout=5)
+
+        if r.ok:
+            return
+        raise ImageNotReady(f"image URL returned {r.status_code}")
+
+    def wait_for_image(self, image_url: str, *, timeout_secs: int = 120) -> None:
+        """Poll the image URL until it returns HTTP 200 or the timeout elapses.
+
+        This replaces the raw ``sleep 45`` in the GitHub Actions workflow with
+        a proper health check so we only proceed once the image is actually
+        servable.
+        """
+        # Use a mutable container so the inner function can update it.
+        head_unsupported: list[bool] = [False]
+
+        retrying = retry(
+            retry=retry_if_exception_type(
+                (ImageNotReady, requests.ConnectionError, requests.Timeout)
+            ),
+            stop=stop_after_delay(timeout_secs),
+            wait=wait_fixed(min(5, max(1, timeout_secs // 4))),
+            reraise=True,
+        )
+
+        try:
+            retrying(self._check_image)(image_url, head_unsupported=head_unsupported)
+        except (ImageNotReady, requests.ConnectionError, requests.Timeout):
+            raise TimeoutError(
+                f"image URL {image_url} did not become reachable within {timeout_secs}s"
+            )
+        log.info("image URL is live: %s", image_url)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=20))
     def _post(self, path: str, **params) -> dict:

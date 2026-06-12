@@ -57,10 +57,6 @@ jobs:
           git commit -m "card: $(date -u +%F)" || echo "no changes"
           git push origin gh-pages
 
-      - name: Wait for GitHub Pages to serve new card
-        if: ${{ !inputs.dry_run }}
-        run: sleep 45
-
       - name: Publish to Instagram
         if: ${{ !inputs.dry_run }}
         env:

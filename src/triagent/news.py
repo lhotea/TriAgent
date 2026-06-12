@@ -7,15 +7,20 @@ from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 
 import feedparser
+import requests
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 log = logging.getLogger(__name__)
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
+_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 def _clean(html: str) -> str:
-    return _WS_RE.sub(" ", _TAG_RE.sub(" ", html or "")).strip()
+    text = _WS_RE.sub(" ", _TAG_RE.sub(" ", html or ""))
+    # Strip control characters that could carry prompt-injection payloads.
+    return _CTRL_RE.sub("", text).strip()
 
 
 def _parse_dt(entry) -> dt.datetime:
@@ -46,6 +51,18 @@ class NewsItem:
         return (now - self.published).total_seconds() / 3600
 
 
+@retry(
+    retry=retry_if_exception_type((requests.Timeout, requests.ConnectionError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=2, max=15),
+    reraise=True,
+)
+def _fetch_feed(feed_url: str) -> feedparser.Feed:
+    resp = requests.get(feed_url, timeout=10)
+    resp.raise_for_status()
+    return feedparser.parse(resp.content)
+
+
 def fetch_recent(
     feed_urls: list[str],
     *,
@@ -58,7 +75,7 @@ def fetch_recent(
 
     for feed_url in feed_urls:
         try:
-            parsed = feedparser.parse(feed_url)
+            parsed = _fetch_feed(feed_url)
         except Exception as exc:
             log.warning("feed fetch failed for %s: %s", feed_url, exc)
             continue

@@ -88,10 +88,14 @@ How to think about this:
   topical tags tied to today's specific stories (athlete names, race names)."""
 
 
+FALLBACK_MODEL = "claude-sonnet-4-5-20251001"
+
+
 class Summarizer:
-    def __init__(self, api_key: str, model: str = "claude-opus-4-7"):
+    def __init__(self, api_key: str, model: str = "claude-opus-4-7", fallback_model: str = FALLBACK_MODEL):
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
+        self.fallback_model = fallback_model
 
     def build_brief(self, items: list[NewsItem], brand_name: str) -> DailyBrief:
         if not items:
@@ -108,9 +112,8 @@ class Summarizer:
             "engagement potential for an Instagram audience of triathletes and aspirants."
         )
 
-        log.info("summarizing %d items with %s", len(items), self.model)
-        response = self.client.messages.parse(
-            model=self.model,
+        # Common kwargs shared between primary and fallback calls.
+        parse_kwargs = dict(
             max_tokens=4096,
             thinking={"type": "adaptive"},
             output_config={"effort": "high"},
@@ -124,6 +127,35 @@ class Summarizer:
             messages=[{"role": "user", "content": user_prompt}],
             output_format=DailyBrief,
         )
+
+        log.info("summarizing %d items with %s", len(items), self.model)
+        try:
+            response = self.client.messages.parse(
+                model=self.model,
+                **parse_kwargs
+            )
+        except (
+            anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
+            anthropic.RateLimitError,
+            anthropic.APIStatusError,
+        ) as exc:
+            log.warning("primary model %s failed (%s), trying fallback %s", self.model, exc, self.fallback_model)
+            try:
+                response = self.client.messages.parse(
+                    model=self.fallback_model,
+                    **parse_kwargs
+                )
+                log.info("fallback model %s succeeded", self.fallback_model)
+            except (
+                anthropic.APIConnectionError,
+                anthropic.APITimeoutError,
+                anthropic.RateLimitError,
+                anthropic.APIStatusError,
+            ) as fallback_exc:
+                raise RuntimeError(
+                    f"both primary ({self.model}) and fallback ({self.fallback_model}) models failed"
+                ) from fallback_exc
 
         brief = response.parsed_output
         if brief is None:
