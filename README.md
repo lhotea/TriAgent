@@ -84,6 +84,21 @@ After a dry-run, inspect `assets/daily_1.png` … `assets/daily_5.png` and
 4. Find your IG Business Account ID:
    `GET https://graph.facebook.com/v20.0/{page-id}?fields=instagram_business_account`.
 
+`scripts/bootstrap_ig_credentials.py` automates steps 3 and 4. Grab a
+short-lived user token from the Graph API Explorer (with the
+`pages_show_list`, `pages_read_engagement`, `instagram_basic`,
+`instagram_content_publish` scopes checked), then:
+
+```bash
+python scripts/bootstrap_ig_credentials.py \
+    --app-id $FB_APP_ID \
+    --app-secret $FB_APP_SECRET \
+    --short-token $FB_SHORT_TOKEN
+```
+
+It prints `.env`-ready `IG_USER_ID=` and `IG_ACCESS_TOKEN=` lines for every
+Page you admin that has an IG Business/Creator account linked.
+
 ### Public image host (for the carousel)
 
 The Graph API fetches each slide by URL — base64 is not supported. The
