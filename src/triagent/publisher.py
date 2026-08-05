@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 import requests
@@ -15,7 +16,11 @@ from tenacity import (
 
 log = logging.getLogger(__name__)
 
-GRAPH = "https://graph.facebook.com/v20.0"
+# Meta supports each Graph API version for ~2 years. v20.0 (May 2024) is past
+# end-of-life, so requests against it fail or get silently rerouted. Override
+# with GRAPH_API_VERSION when Meta ships a newer version.
+GRAPH_VERSION = os.environ.get("GRAPH_API_VERSION", "v25.0")
+GRAPH = f"https://graph.facebook.com/{GRAPH_VERSION}"
 
 
 class ImageNotReady(Exception):
