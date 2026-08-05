@@ -19,8 +19,29 @@ log = logging.getLogger(__name__)
 # Meta supports each Graph API version for ~2 years. v20.0 (May 2024) is past
 # end-of-life, so requests against it fail or get silently rerouted. Override
 # with GRAPH_API_VERSION when Meta ships a newer version.
-GRAPH_VERSION = os.environ.get("GRAPH_API_VERSION", "v25.0")
-GRAPH = f"https://graph.facebook.com/{GRAPH_VERSION}"
+DEFAULT_GRAPH_VERSION = "v25.0"
+
+# Two ways to reach a publishable Instagram account:
+#
+#   instagram_login — Instagram API with Instagram Login. Authenticates directly
+#       against Instagram; needs NO Facebook Page. Requires only a Business or
+#       Creator IG account. This is the simpler setup and the default.
+#
+#   facebook_login  — the classic Instagram Graph API. Reaches the IG account
+#       through a linked Facebook Page, which must exist and be linked, and
+#       whose access must be granted to the app during Business Login.
+#
+# The publish endpoints (/media, /media_publish, status polling) are identical
+# across both; only the host differs.
+API_HOSTS = {
+    "instagram_login": "https://graph.instagram.com",
+    "facebook_login": "https://graph.facebook.com",
+}
+DEFAULT_API_MODE = "instagram_login"
+
+# Kept for backwards compatibility with anything importing the old constant.
+GRAPH_VERSION = os.environ.get("GRAPH_API_VERSION", DEFAULT_GRAPH_VERSION)
+GRAPH = f"{API_HOSTS['facebook_login']}/{GRAPH_VERSION}"
 
 
 class ImageNotReady(Exception):
@@ -28,16 +49,57 @@ class ImageNotReady(Exception):
 
 
 class InstagramPublisher:
-    """Two-step publish via the Instagram Graph API.
+    """Two-step publish via the Instagram content publishing API.
 
-    Requires an Instagram Business or Creator account linked to a Facebook Page,
-    plus a long-lived user access token with `instagram_content_publish` and
-    `instagram_basic` scopes.
+    Works against either auth path (see API_HOSTS above):
+
+    * ``instagram_login`` (default) — Instagram Business/Creator account, a
+      token from Instagram OAuth with the ``instagram_business_basic`` and
+      ``instagram_business_content_publish`` scopes. No Facebook Page needed.
+    * ``facebook_login`` — Instagram Business/Creator account linked to a
+      Facebook Page, with a token carrying ``instagram_basic`` and
+      ``instagram_content_publish``.
     """
 
-    def __init__(self, ig_user_id: str, access_token: str):
+    def __init__(
+        self,
+        ig_user_id: str,
+        access_token: str,
+        *,
+        api_mode: str | None = None,
+        graph_version: str | None = None,
+    ):
         self.ig_user_id = ig_user_id
         self.access_token = access_token
+
+        # Resolve from env at construction rather than import, so .env loading
+        # order doesn't silently pin the wrong host.
+        mode = api_mode or os.environ.get("IG_API_MODE") or DEFAULT_API_MODE
+        if mode not in API_HOSTS:
+            raise ValueError(
+                f"unknown IG_API_MODE {mode!r}; expected one of {sorted(API_HOSTS)}"
+            )
+        self.api_mode = mode
+        self.graph_version = (
+            graph_version
+            or os.environ.get("GRAPH_API_VERSION")
+            or DEFAULT_GRAPH_VERSION
+        )
+        self.base = f"{API_HOSTS[mode]}/{self.graph_version}"
+        log.info("publisher using %s (%s)", self.base, mode)
+
+    def whoami(self) -> dict:
+        """Return the authenticated Instagram account's id and username.
+
+        Handy during setup: confirms the token works and surfaces the account
+        ID to put in IG_USER_ID, without hunting through Meta's UI.
+        """
+        fields = (
+            "user_id,username"
+            if self.api_mode == "instagram_login"
+            else "id,username"
+        )
+        return self._get("me", fields=fields)
 
     def _check_image(self, image_url: str, *, head_unsupported: list[bool]) -> None:
         """Check whether the image URL is reachable; raise ImageNotReady if not."""
@@ -85,7 +147,7 @@ class InstagramPublisher:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=20))
     def _post(self, path: str, **params) -> dict:
         params["access_token"] = self.access_token
-        r = requests.post(f"{GRAPH}/{path}", data=params, timeout=30)
+        r = requests.post(f"{self.base}/{path}", data=params, timeout=30)
         if not r.ok:
             log.error("graph %s failed: %s", path, r.text)
             r.raise_for_status()
@@ -94,7 +156,7 @@ class InstagramPublisher:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=20))
     def _get(self, path: str, **params) -> dict:
         params["access_token"] = self.access_token
-        r = requests.get(f"{GRAPH}/{path}", params=params, timeout=30)
+        r = requests.get(f"{self.base}/{path}", params=params, timeout=30)
         if not r.ok:
             log.error("graph GET %s failed: %s", path, r.text)
             r.raise_for_status()

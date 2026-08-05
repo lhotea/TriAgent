@@ -88,7 +88,10 @@ How to think about this:
   topical tags tied to today's specific stories (athlete names, race names)."""
 
 
-FALLBACK_MODEL = "claude-sonnet-4-5-20251001"
+# Use the alias, not a dated snapshot. "claude-sonnet-4-5-20251001" was invalid:
+# 20251001 is the Haiku 4.5 snapshot date, so that ID would 404 — and only on
+# the fallback path, i.e. exactly when the primary model is already failing.
+FALLBACK_MODEL = "claude-sonnet-4-5"
 
 
 class Summarizer:

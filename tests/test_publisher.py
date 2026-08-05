@@ -255,3 +255,82 @@ class TestPostAndGet:
         with patch("triagent.publisher.requests.get", return_value=mock_response):
             with pytest.raises(tenacity.RetryError):
                 publisher._get("123/test")
+
+
+class TestApiMode:
+    """Tests for the instagram_login / facebook_login host selection."""
+
+    def test_defaults_to_instagram_login(self, monkeypatch):
+        monkeypatch.delenv("IG_API_MODE", raising=False)
+        p = InstagramPublisher(ig_user_id="1", access_token="t")
+        assert p.api_mode == "instagram_login"
+        assert p.base.startswith("https://graph.instagram.com/")
+
+    def test_facebook_login_uses_graph_facebook_host(self):
+        p = InstagramPublisher(
+            ig_user_id="1", access_token="t", api_mode="facebook_login"
+        )
+        assert p.base.startswith("https://graph.facebook.com/")
+
+    def test_mode_read_from_env(self, monkeypatch):
+        monkeypatch.setenv("IG_API_MODE", "facebook_login")
+        p = InstagramPublisher(ig_user_id="1", access_token="t")
+        assert p.api_mode == "facebook_login"
+
+    def test_explicit_arg_beats_env(self, monkeypatch):
+        monkeypatch.setenv("IG_API_MODE", "facebook_login")
+        p = InstagramPublisher(
+            ig_user_id="1", access_token="t", api_mode="instagram_login"
+        )
+        assert p.api_mode == "instagram_login"
+
+    def test_unknown_mode_raises(self):
+        with pytest.raises(ValueError, match="unknown IG_API_MODE"):
+            InstagramPublisher(ig_user_id="1", access_token="t", api_mode="nope")
+
+    def test_graph_version_override(self, monkeypatch):
+        monkeypatch.setenv("GRAPH_API_VERSION", "v99.0")
+        p = InstagramPublisher(ig_user_id="1", access_token="t")
+        assert p.base.endswith("/v99.0")
+
+    def test_post_targets_selected_host(self):
+        p = InstagramPublisher(
+            ig_user_id="1", access_token="t", api_mode="instagram_login"
+        )
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {"id": "x"}
+        with patch(
+            "triagent.publisher.requests.post", return_value=mock_response
+        ) as mock_post:
+            p._post("1/media", image_url="https://e.com/i.png")
+        assert mock_post.call_args[0][0].startswith("https://graph.instagram.com/")
+
+
+class TestWhoami:
+    """Tests for the whoami() setup helper."""
+
+    def test_instagram_login_requests_user_id_field(self):
+        p = InstagramPublisher(
+            ig_user_id="me", access_token="t", api_mode="instagram_login"
+        )
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {"user_id": "178", "username": "tri"}
+        with patch(
+            "triagent.publisher.requests.get", return_value=mock_response
+        ) as mock_get:
+            out = p.whoami()
+        assert out["user_id"] == "178"
+        assert mock_get.call_args[1]["params"]["fields"] == "user_id,username"
+
+    def test_facebook_login_requests_id_field(self):
+        p = InstagramPublisher(
+            ig_user_id="me", access_token="t", api_mode="facebook_login"
+        )
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {"id": "178", "username": "tri"}
+        with patch("triagent.publisher.requests.get", return_value=mock_response) as mg:
+            p.whoami()
+        assert mg.call_args[1]["params"]["fields"] == "id,username"

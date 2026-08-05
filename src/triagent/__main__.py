@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 
@@ -12,7 +13,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="triagent")
     parser.add_argument(
         "--mode",
-        choices=["full", "build", "publish"],
+        choices=["full", "build", "publish", "whoami"],
         default="full",
         help=(
             "full: build + publish in one process. "
@@ -42,6 +43,21 @@ def main() -> int:
     except RuntimeError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.mode == "whoami":
+        # Setup helper: verify the token and print the account ID for IG_USER_ID.
+        # Only the token is needed, so don't demand the full publish config.
+        if not settings.ig_access_token:
+            print("config error: IG_ACCESS_TOKEN is not set", file=sys.stderr)
+            return 2
+        from .publisher import InstagramPublisher
+
+        probe = InstagramPublisher(
+            ig_user_id=settings.ig_user_id or "me",
+            access_token=settings.ig_access_token,
+        )
+        print(json.dumps(probe.whoami(), indent=2))
+        return 0
 
     if args.mode == "build":
         build(settings)

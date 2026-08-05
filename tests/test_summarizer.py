@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import anthropic
 import pytest
 
-from triagent.summarizer import DailyBrief, Headline, Summarizer
+from triagent.summarizer import FALLBACK_MODEL, DailyBrief, Headline, Summarizer
 
 
 def test_headline_creation():
@@ -98,7 +98,7 @@ def test_summarizer_init():
 
         summ = Summarizer(api_key="test-key")
         assert summ.model == "claude-opus-4-7"
-        assert summ.fallback_model == "claude-sonnet-4-5-20251001"
+        assert summ.fallback_model == FALLBACK_MODEL
 
         mock_client_cls.assert_called_once_with(api_key="test-key")
 
@@ -167,7 +167,7 @@ def test_build_brief_fallback_on_connection_error(sample_news_items):
         assert mock_client.messages.parse.call_count == 2
         # Second call should use fallback model
         calls = mock_client.messages.parse.call_args_list
-        assert calls[1].kwargs["model"] == "claude-sonnet-4-5-20251001"
+        assert calls[1].kwargs["model"] == FALLBACK_MODEL
 
 
 def test_build_brief_fallback_on_timeout(sample_news_items):
