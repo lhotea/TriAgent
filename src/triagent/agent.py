@@ -9,6 +9,7 @@ from .image import render_card
 from .monetization import assemble_caption
 from .news import fetch_recent
 from .publisher import InstagramPublisher
+from .review import render_review_page
 from .summarizer import DailyBrief, Summarizer
 
 log = logging.getLogger(__name__)
@@ -68,6 +69,14 @@ def build(settings: Settings) -> RunResult:
 
     caption_path = settings.image_path.with_name("caption.txt")
     caption_path.write_text(caption, encoding="utf-8")
+
+    # Human-postable fallback: card + caption on one page, published alongside
+    # the image. Keeps the pipeline useful when API publishing is unavailable.
+    render_review_page(
+        caption,
+        brand_name=settings.brand_name,
+        out_path=settings.image_path.with_name("index.html"),
+    )
     log.info("caption written to %s", caption_path)
 
     return RunResult(

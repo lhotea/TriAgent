@@ -65,6 +65,16 @@ def main() -> int:
         return 0
 
     if args.mode == "publish":
+        # "Not configured yet" and "configured but broken" are different states.
+        # Skip cleanly for the former so an unconfigured account doesn't produce
+        # a failing run every day; still fail loudly for the latter.
+        if not (settings.ig_user_id and settings.ig_access_token):
+            print(
+                "Instagram credentials not set — skipping publish.\n"
+                "The card and caption are still built; see the review page.",
+                file=sys.stderr,
+            )
+            return 0
         result = publish_from_build(settings)
         print(f"published: https://www.instagram.com/p/{result.media_id}/")
         return 0

@@ -50,10 +50,11 @@ jobs:
             git worktree add --orphan -b gh-pages gh-pages-wt
           fi
           cp assets/daily.png gh-pages-wt/daily.png
+          cp assets/index.html gh-pages-wt/index.html
           cd gh-pages-wt
           git config user.email "actions@github.com"
           git config user.name "TriAgent Bot"
-          git add daily.png
+          git add daily.png index.html
           git commit -m "card: $(date -u +%F)" || echo "no changes"
           git push origin gh-pages
 
@@ -78,4 +79,5 @@ jobs:
           path: |
             assets/daily.png
             assets/caption.txt
+            assets/index.html
           if-no-files-found: ignore
