@@ -85,6 +85,7 @@ def test_render_card_includes_headlines(tmp_assets_dir, sample_brief):
             title="Extra headline that should not render",
             one_liner="Extra one-liner",
             source="Extra",
+            source_url="https://example.com/extra",
         )
     )
 

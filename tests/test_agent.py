@@ -230,3 +230,88 @@ class TestDatedAssetNames:
 
         mock_settings.public_image_base_url = "https://cdn.example.com"
         assert _image_url(mock_settings).endswith(dated_name("daily", ".png"))
+
+
+class _Item:
+    def __init__(self, title, url, source="Src"):
+        self.title, self.url, self.source = title, url, source
+
+
+class _H:
+    def __init__(self, title, source_url):
+        self.title, self.source_url = title, source_url
+        self.source = "Model"
+
+
+class _Brief:
+    def __init__(self, headlines):
+        self.headlines = headlines
+
+
+class TestStoriesForPage:
+    """The lead story must appear in its own list.
+
+    It previously could not: the page listed the most recent items, but the
+    model ranks by engagement, so the headline's story could fall outside the
+    recency window entirely.
+    """
+
+    def test_lead_story_is_first(self):
+        from triagent.agent import _stories_for_page
+
+        items = [_Item(f"t{i}", f"https://e.com/{i}") for i in range(10)]
+        brief = _Brief([_H("She quit lifting for T100", "https://e.com/9")])
+        out = _stories_for_page(brief, items)
+        assert out[0].url == "https://e.com/9"
+
+    def test_uses_model_rewritten_title(self):
+        from triagent.agent import _stories_for_page
+
+        items = [_Item("Original wire headline", "https://e.com/1")]
+        brief = _Brief([_H("Punchier rewrite", "https://e.com/1")])
+        assert _stories_for_page(brief, items)[0].title == "Punchier rewrite"
+
+    def test_keeps_real_publication_name(self):
+        from triagent.agent import _stories_for_page
+
+        items = [_Item("t", "https://e.com/1", source="Triathlete")]
+        brief = _Brief([_H("rewrite", "https://e.com/1")])
+        assert _stories_for_page(brief, items)[0].source == "Triathlete"
+
+    def test_drops_hallucinated_url(self):
+        """A fabricated link is worse than a missing one."""
+        from triagent.agent import _stories_for_page
+
+        items = [_Item("t", "https://e.com/1")]
+        brief = _Brief([_H("rewrite", "https://made-up.example/x")])
+        out = _stories_for_page(brief, items)
+        assert all(s.url != "https://made-up.example/x" for s in out)
+
+    def test_backfills_when_headlines_drop_out(self):
+        from triagent.agent import _stories_for_page
+
+        items = [_Item(f"t{i}", f"https://e.com/{i}") for i in range(4)]
+        brief = _Brief([_H("bad", "https://nope.example/x")])
+        assert len(_stories_for_page(brief, items)) == 4
+
+    def test_no_duplicates(self):
+        from triagent.agent import _stories_for_page
+
+        items = [_Item("t1", "https://e.com/1"), _Item("t2", "https://e.com/2")]
+        brief = _Brief([_H("a", "https://e.com/1"), _H("b", "https://e.com/1")])
+        urls = [s.url for s in _stories_for_page(brief, items)]
+        assert len(urls) == len(set(urls))
+
+    def test_preserves_model_ranking_order(self):
+        from triagent.agent import _stories_for_page
+
+        items = [_Item(f"t{i}", f"https://e.com/{i}") for i in range(5)]
+        brief = _Brief([_H("a", "https://e.com/3"), _H("b", "https://e.com/0")])
+        out = _stories_for_page(brief, items)
+        assert [s.url for s in out[:2]] == ["https://e.com/3", "https://e.com/0"]
+
+    def test_caps_at_six(self):
+        from triagent.agent import _stories_for_page
+
+        items = [_Item(f"t{i}", f"https://e.com/{i}") for i in range(20)]
+        assert len(_stories_for_page(_Brief([]), items)) == 6

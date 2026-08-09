@@ -102,16 +102,19 @@ def sample_brief():
                 title="Kemenz Wins Ironman Kona in Dramatic Swim Exit",
                 one_liner="The Australian dominated from the start.",
                 source="Triathlete",
+                source_url="https://example.com/1",
             ),
             Headline(
                 title="New Tri-Suit Tech Could Change Race Dynamics",
                 one_liner="Speedo's wetsuit promises 3% faster swim splits.",
                 source="Slowtwitch",
+                source_url="https://example.com/2",
             ),
             Headline(
                 title="ITU Adds Middle East Stop to 2027 Calendar",
                 one_liner="Dubai will host the season opener next year.",
                 source="Tri247",
+                source_url="https://example.com/3",
             ),
         ],
         caption_body="What a day at Kona! Kemenz showed why they're the favorite. "

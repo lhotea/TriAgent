@@ -88,7 +88,7 @@ identification and debate over neutral reporting — and produces:
 | `hook` | The headline set large on the card *and* the first caption line |
 | `hook_emphasis` | Substring of `hook` rendered in accent colour — the story's subject |
 | `image_query` | The scene the picture should show, as a concrete 3–8 word description |
-| `headlines[]` | 3–5 rewritten for Instagram, ranked, juiciest first |
+| `headlines[]` | 3–5 rewritten for Instagram, ranked, juiciest first, each with its `source_url` |
 | `caption_body` | 4–7 paragraphs, one sentence each |
 | `engagement_prompt` | A question answerable from experience, not knowledge |
 | `hashtags[]` | 6–10 only. A wall of 25 reads as spam. |
@@ -174,6 +174,12 @@ stable filename is a correctness bug rather than an untidiness: the URL handed
 to Meta never changes, so the CDN in front of Pages can answer with the previous
 day's bytes and Instagram posts the wrong picture. Distinct URLs remove the
 possibility, and leave a dated archive behind.
+
+Story links on the review page follow the model's ranking, not recency. That
+distinction is load-bearing: the page used to list the most recent items, while
+the model picks the lead story by engagement — so the story the headline was
+about could be missing from its own list. Each headline now carries the
+`source_url` it came from, validated against the fetched items.
 
 The review page is also the **link-in-bio destination**. Instagram strips URLs
 from captions, so the bio link is the only clickable path off a post — it has to
@@ -280,6 +286,7 @@ Run #121 published successfully to Instagram (`media_id=18082672631692674`).
   now single-story like the reference; the reference achieves depth with
   carousels, which this does not yet produce.
 - **The slowtwitch feed path is unverified** — see the comment in `config.py`.
-- **Headline-to-URL mapping is approximate.** Claude rewrites titles, so the
-  review page lists the source items the brief was built from rather than
-  claiming an exact per-headline mapping.
+- **Model-supplied source urls are validated, not trusted.** Each headline
+  carries the url it came from; any url not present in the fetched items is
+  dropped rather than published, because a fabricated link is worse than a
+  missing one. Dropped entries are backfilled from the fetched items.

@@ -16,6 +16,7 @@ def test_headline_creation():
         title="Test headline here",
         one_liner="This is why it matters.",
         source="TestSource",
+        source_url="https://example.com/t",
     )
     assert h.title == "Test headline here"
     assert h.one_liner == "This is why it matters."
@@ -36,8 +37,8 @@ def test_daily_brief_min_max_headlines():
         DailyBrief(
             hook="Short hook",
             headlines=[
-                Headline(title="One", one_liner="Why", source="S"),
-                Headline(title="Two", one_liner="Why", source="S"),
+                Headline(title="One", one_liner="Why", source="S", source_url="https://example.com/One"),
+                Headline(title="Two", one_liner="Why", source="S", source_url="https://example.com/Two"),
             ],
             caption_body="Body",
             engagement_prompt="Question?",
@@ -48,12 +49,12 @@ def test_daily_brief_min_max_headlines():
         DailyBrief(
             hook="Short hook",
             headlines=[
-                Headline(title="One", one_liner="Why", source="S"),
-                Headline(title="Two", one_liner="Why", source="S"),
-                Headline(title="Three", one_liner="Why", source="S"),
-                Headline(title="Four", one_liner="Why", source="S"),
-                Headline(title="Five", one_liner="Why", source="S"),
-                Headline(title="Six", one_liner="Why", source="S"),
+                Headline(title="One", one_liner="Why", source="S", source_url="https://example.com/One"),
+                Headline(title="Two", one_liner="Why", source="S", source_url="https://example.com/Two"),
+                Headline(title="Three", one_liner="Why", source="S", source_url="https://example.com/Three"),
+                Headline(title="Four", one_liner="Why", source="S", source_url="https://example.com/Four"),
+                Headline(title="Five", one_liner="Why", source="S", source_url="https://example.com/Five"),
+                Headline(title="Six", one_liner="Why", source="S", source_url="https://example.com/Six"),
             ],
             caption_body="Body",
             engagement_prompt="Question?",
@@ -67,9 +68,9 @@ def test_daily_brief_min_max_hashtags():
         DailyBrief(
             hook="Short hook",
             headlines=[
-                Headline(title="One", one_liner="Why", source="S"),
-                Headline(title="Two", one_liner="Why", source="S"),
-                Headline(title="Three", one_liner="Why", source="S"),
+                Headline(title="One", one_liner="Why", source="S", source_url="https://example.com/One"),
+                Headline(title="Two", one_liner="Why", source="S", source_url="https://example.com/Two"),
+                Headline(title="Three", one_liner="Why", source="S", source_url="https://example.com/Three"),
             ],
             caption_body="Body",
             engagement_prompt="Question?",
@@ -80,9 +81,9 @@ def test_daily_brief_min_max_hashtags():
         DailyBrief(
             hook="Short hook",
             headlines=[
-                Headline(title="One", one_liner="Why", source="S"),
-                Headline(title="Two", one_liner="Why", source="S"),
-                Headline(title="Three", one_liner="Why", source="S"),
+                Headline(title="One", one_liner="Why", source="S", source_url="https://example.com/One"),
+                Headline(title="Two", one_liner="Why", source="S", source_url="https://example.com/Two"),
+                Headline(title="Three", one_liner="Why", source="S", source_url="https://example.com/Three"),
             ],
             caption_body="Body",
             engagement_prompt="Question?",

@@ -23,6 +23,15 @@ class Headline(BaseModel):
         description="Single sentence (~20 words) explaining why this matters to triathletes.",
     )
     source: str = Field(..., description="Source publication name.")
+    source_url: str = Field(
+        ...,
+        description=(
+            "The EXACT url of the source item this headline came from, copied "
+            "character-for-character from the list you were given. Do not "
+            "shorten, guess or construct it. This is what readers click, so a "
+            "wrong url is worse than no headline."
+        ),
+    )
 
 
 class DailyBrief(BaseModel):

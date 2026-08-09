@@ -57,6 +57,44 @@ def _image_url(settings: Settings) -> str:
     return _asset_url(settings, dated_name("daily", ".png"))
 
 
+def _stories_for_page(brief, items) -> list:
+    """Story links for the review page, in the model's ranked order.
+
+    Previously the page listed the most *recent* items, but the model ranks by
+    engagement, not recency — so the lead story (the one the headline is about)
+    could be absent from its own list. Asking the model for each headline's
+    source url fixes that directly.
+
+    Model-supplied urls are validated against the items actually fetched. A url
+    that wasn't in the input is dropped rather than published, since a
+    fabricated link is worse than a missing one. Anything dropped is backfilled
+    from the fetched items so the page is never short.
+    """
+    by_url = {i.url: i for i in items}
+    stories, seen = [], set()
+
+    for h in getattr(brief, "headlines", []):
+        url = (getattr(h, "source_url", "") or "").strip()
+        if url in by_url and url not in seen:
+            seen.add(url)
+            item = by_url[url]
+            # Prefer the model's rewritten title; keep the real publication.
+            stories.append(
+                type("Story", (), {"title": h.title, "url": url, "source": item.source})()
+            )
+        elif url:
+            log.warning("dropping headline with unrecognised source_url: %s", url)
+
+    for item in items:
+        if len(stories) >= 6:
+            break
+        if item.url not in seen:
+            seen.add(item.url)
+            stories.append(item)
+
+    return stories[:6]
+
+
 def _do_publish(settings: Settings, image_url: str, caption: str) -> str:
     """Shared helper: create publisher, wait for the asset, publish."""
     assert settings.ig_user_id and settings.ig_access_token  # checked by caller
@@ -149,17 +187,14 @@ def build(settings: Settings) -> RunResult:
     if mp4.exists():
         mp4.with_name(dated_name("daily", ".mp4")).write_bytes(mp4.read_bytes())
 
-    # Human-postable fallback: card + caption on one page, published alongside
-    # the image. Keeps the pipeline useful when API publishing is unavailable.
-    # Link the actual sources: the post's CTA points here for "full stories",
-    # so this page has to be able to deliver them. Use the items the brief was
-    # built from — Claude rewrites headlines, so its output can't be mapped
-    # back to URLs reliably, but these are exactly what it read.
+    # Human-postable fallback, and the link-in-bio destination: card, caption
+    # and the day's stories as real links. Ordered by the model's ranking so
+    # the lead story — the one the headline is about — is always first.
     render_review_page(
         caption,
         brand_name=settings.brand_name,
         out_path=settings.image_path.with_name("index.html"),
-        stories=top_items[: settings.max_headlines],
+        stories=_stories_for_page(brief, top_items),
         image_name=dated_png.name,
     )
     log.info("caption written to %s", caption_path)
