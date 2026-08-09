@@ -70,6 +70,10 @@ triathlete.com/feed/, dcrainmaker.com/feed, 220triathlon.com/feed/atom
 
 Directories like `rss.feedspot.com/triathlon_rss_feeds/` are a good source.
 
+Use the full feed path, not the bare domain: `tri247.com` returns 403, while
+`www.tri247.com/feed` works. Run #123 reached 13 of 14 feeds, the single failure
+being exactly that mistake.
+
 Verify before relying on them:
 
 ```bash
@@ -155,6 +159,34 @@ Repo → **Secrets**:
 
 ---
 
+## 5b. Put the link in your Instagram bio ⚠️
+
+**Nothing works without this and the agent cannot do it for you.** Instagram
+strips URLs from captions — they are never clickable — so every post says "link
+in bio". If the bio has no link, that instruction dead-ends and the whole
+call-to-action is wasted.
+
+1. Instagram → **Edit profile** → **Links** → **Add external link**.
+2. URL: the same value as `PUBLIC_IMAGE_BASE_URL`, e.g.
+   `https://lhotea.github.io/TriAgent`
+3. Title: something like "Today's stories".
+
+That page is the review page the agent republishes every run: today's card, the
+day's stories as real links to the source articles, and the caption.
+
+> Two things to know:
+> - The page only updates on a **non-dry-run**. Dry runs deliberately skip the
+>   gh-pages step, so the live page stays on the previous run's content.
+> - The card is published under a **dated filename** (`daily-2026-08-09.png`)
+>   because a stable URL let the CDN serve a stale image to Instagram. The bio
+>   link points at the directory, not the image, so it always shows the latest.
+
+If you'd rather send traffic to Linktree or your own landing page, put that URL
+in the bio instead — just make sure whatever you link actually contains the
+stories the post promises.
+
+---
+
 ## 6. Token auto-refresh
 
 Without this, publishing dies ~60 days after setup.
@@ -196,13 +228,43 @@ Leave `POST_FORMAT` unset or `image` for the static card.
 
 ---
 
-## 8. Optional — background photos
+## 8. Pictures — strongly recommended
 
-Drop `.jpg` / `.png` / `.webp` files into `assets/backgrounds/`. One is chosen
-per day, deterministically from the date. Empty directory uses the gradient.
+The card design puts a photo across the top ~58%. Without one it falls back to a
+headline-only layout, which works but looks plainer than the reference.
+
+Claude decides **what** the picture should show by reading the lead story. It
+cannot draw it — the Anthropic API has no image-generation endpoint — so a
+provider renders or finds it. Sources are tried in order:
+
+### 8a. Stock photography (recommended, free)
+
+1. https://www.pexels.com/api/ → sign up → copy your key.
+2. Repo secret **`PEXELS_API_KEY`**.
+
+Real licensed photography, free, and closest to the reference look. Verified
+working: run #123 resolved *"woman deadlifting barbell in gym"* from the day's
+strength-training story.
+
+### 8b. Image generation (optional, paid)
+
+Repo secret **`IMAGE_GEN_API_KEY`** — any OpenAI-compatible images endpoint.
+Override the endpoint and model with `IMAGE_GEN_ENDPOINT` / `IMAGE_GEN_MODEL`.
+
+Costs per image. Worth knowing that generated images still tend to give
+themselves away on human anatomy, which is most of triathlon — so stock is often
+the better-looking option, not merely the cheaper one.
+
+### 8c. Local files
+
+Drop `.jpg` / `.png` / `.webp` into `assets/backgrounds/`. One is chosen per day
+from the date.
 
 > ⚠️ Use images you have rights to. Photos taken from publishers' articles are a
 > legal problem on a monetized account.
+
+If none of the three is configured, the card uses its headline-led layout — no
+failure, just a plainer post.
 
 ---
 
@@ -244,9 +306,12 @@ python -m triagent --mode full --dry-run
 | 5 | Meta app, no business portfolio | developers.facebook.com | ✅ to publish |
 | 5 | Instagram Tester role accepted | App roles + Instagram | ✅ to publish |
 | 5 | `IG_USER_ID`, `IG_ACCESS_TOKEN` | Secrets | ✅ to publish |
+| 5b | Link added to Instagram bio | Instagram app | ✅ or the CTA dead-ends |
 | 6 | `GH_PAT` | Secret | ✅ beyond 60 days |
 | 7 | `POST_FORMAT`, `REEL_AUDIO` | Variables | only for Reels |
-| 8 | `assets/backgrounds/*` | Repo | optional |
+| 8 | `PEXELS_API_KEY` | Secret | strongly recommended |
+| 8 | `IMAGE_GEN_API_KEY` | Secret | optional, paid |
+| 8 | `assets/backgrounds/*` | Repo | optional fallback |
 | 9 | `AFFILIATE_URLS` | Secret | optional |
 
 ---
@@ -265,3 +330,9 @@ python -m triagent --mode full --dry-run
 | `me/accounts` returns `data: []` | No Facebook Page — irrelevant on the Instagram Login path |
 | Caption ends with `link in bio ()` | `BRAND_HANDLE` unset |
 | `ffmpeg is required` | `POST_FORMAT=reel` without ffmpeg — CI has it, local may not |
+| Card has no photo, just a headline | No picture source configured — see §8 |
+| Posted image is not the newest one | Fixed by dated filenames; older posts used a cached stable URL |
+| "Link in bio" goes nowhere | No link set on the Instagram profile — see §5b |
+| Live page shows an old post | Last run was a dry run; gh-pages only updates on a real run |
+| Headline looks wide, not condensed | No condensed font installed; CI adds `fonts-dejavu-extra` |
+| `403 Forbidden` on a feed | Often a bare domain — use the full feed path, e.g. `www.tri247.com/feed` |

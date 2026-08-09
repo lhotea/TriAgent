@@ -70,7 +70,7 @@ _PAGE = """<!doctype html>
 <h1>{brand}</h1>
 <div class="meta">{date} · generated automatically</div>
 
-<img src="daily.png" alt="Today's card">
+<img src="{image_name}" alt="Today's card">
 
 <h2>Today's stories</h2>
 <ol class="stories">
@@ -81,7 +81,7 @@ _PAGE = """<!doctype html>
   <summary>Caption (for posting)</summary>
   <div class="bar">
     <button id="copy">Copy caption</button>
-    <a class="btn" href="daily.png" download>Download image</a>
+    <a class="btn" href="{image_name}" download>Download image</a>
     <span class="ok" id="ok">copied</span>
   </div>
   <pre id="caption">{caption}</pre>
@@ -105,6 +105,7 @@ def render_review_page(
     brand_name: str,
     out_path: Path,
     stories: Sequence[Story] = (),
+    image_name: str = "daily.png",
 ) -> Path:
     """Write a self-contained review page next to the rendered card.
 
@@ -127,6 +128,7 @@ def render_review_page(
         date=dt.datetime.now(dt.timezone.utc).strftime("%A, %d %B %Y"),
         caption=html.escape(caption),
         stories=items,
+        image_name=html.escape(image_name, quote=True),
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(page, encoding="utf-8")

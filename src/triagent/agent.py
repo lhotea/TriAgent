@@ -30,6 +30,22 @@ class RunResult:
     media_id: str | None  # None in dry-run / build-only mode
 
 
+def _today() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def dated_name(stem: str, suffix: str, when: str | None = None) -> str:
+    """Return e.g. 'daily-2026-08-09.png'.
+
+    Publishing under a stable filename is a real correctness bug, not just
+    untidiness: the URL handed to Meta never changes, so the CDN in front of
+    GitHub Pages can answer with yesterday's bytes and Instagram will post the
+    wrong picture. A distinct URL per day removes any chance of that, and
+    leaves a dated archive as a side effect.
+    """
+    return f"{stem}-{when or _today()}{suffix}"
+
+
 def _asset_url(settings: Settings, filename: str) -> str:
     if not settings.public_image_base_url:
         # Build mode can run without this — it's only informational until publish.
@@ -38,7 +54,7 @@ def _asset_url(settings: Settings, filename: str) -> str:
 
 
 def _image_url(settings: Settings) -> str:
-    return _asset_url(settings, settings.image_path.name)
+    return _asset_url(settings, dated_name("daily", ".png"))
 
 
 def _do_publish(settings: Settings, image_url: str, caption: str) -> str:
@@ -49,7 +65,7 @@ def _do_publish(settings: Settings, image_url: str, caption: str) -> str:
     )
 
     if settings.post_format == "reel":
-        video_url = _asset_url(settings, "daily.mp4")
+        video_url = _asset_url(settings, dated_name("daily", ".mp4"))
         log.info("waiting for video URL to be reachable: %s", video_url)
         publisher.wait_for_image(video_url)
         # Cover frame is the still card, so the feed thumbnail matches the post.
@@ -125,6 +141,14 @@ def build(settings: Settings) -> RunResult:
     caption_path = settings.image_path.with_name("caption.txt")
     caption_path.write_text(caption, encoding="utf-8")
 
+    # Dated copies are what actually get published; the undated names stay for
+    # artifacts and local inspection.
+    dated_png = settings.image_path.with_name(dated_name("daily", ".png"))
+    dated_png.write_bytes(settings.image_path.read_bytes())
+    mp4 = settings.image_path.with_name("daily.mp4")
+    if mp4.exists():
+        mp4.with_name(dated_name("daily", ".mp4")).write_bytes(mp4.read_bytes())
+
     # Human-postable fallback: card + caption on one page, published alongside
     # the image. Keeps the pipeline useful when API publishing is unavailable.
     # Link the actual sources: the post's CTA points here for "full stories",
@@ -136,6 +160,7 @@ def build(settings: Settings) -> RunResult:
         brand_name=settings.brand_name,
         out_path=settings.image_path.with_name("index.html"),
         stories=top_items[: settings.max_headlines],
+        image_name=dated_png.name,
     )
     log.info("caption written to %s", caption_path)
 
@@ -157,7 +182,7 @@ def publish_from_build(settings: Settings) -> RunResult:
         )
 
     if settings.post_format == "reel":
-        mp4 = settings.image_path.with_name("daily.mp4")
+        mp4 = settings.image_path.with_name(dated_name("daily", ".mp4"))
         if not mp4.exists():
             raise RuntimeError(f"no rendered reel at {mp4}; run build step first")
 

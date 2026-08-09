@@ -195,10 +195,38 @@ class TestImageURL:
     def test_image_url_with_base_url(self, mock_settings):
         mock_settings.public_image_base_url = "https://cdn.example.com"
         url = _image_url(mock_settings)
-        assert url == "https://cdn.example.com/daily.png"
+        assert url.startswith("https://cdn.example.com/daily-")
+        assert url.endswith(".png")
 
     def test_image_url_without_base_url(self, mock_settings):
         mock_settings.public_image_base_url = None
         url = _image_url(mock_settings)
         assert "<unset>" in url
-        assert "daily.png" in url
+        assert url.endswith(".png")
+
+
+class TestDatedAssetNames:
+    """Published assets must not reuse a filename across days.
+
+    A stable URL lets the CDN in front of GitHub Pages serve yesterday's bytes
+    to Meta, which posts the wrong picture — the exact symptom reported after
+    run #123.
+    """
+
+    def test_dated_name_embeds_the_date(self):
+        from triagent.agent import dated_name
+
+        assert dated_name("daily", ".png", "2026-08-09") == "daily-2026-08-09.png"
+
+    def test_dated_name_differs_across_days(self):
+        from triagent.agent import dated_name
+
+        a = dated_name("daily", ".png", "2026-08-09")
+        b = dated_name("daily", ".png", "2026-08-10")
+        assert a != b
+
+    def test_image_url_is_dated(self, mock_settings):
+        from triagent.agent import dated_name
+
+        mock_settings.public_image_base_url = "https://cdn.example.com"
+        assert _image_url(mock_settings).endswith(dated_name("daily", ".png"))

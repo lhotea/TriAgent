@@ -13,10 +13,13 @@ Every day:
 2. Sends the raw headlines to Claude, which ranks them for Instagram engagement
    value and returns a structured brief: hook, rewritten headlines, caption body,
    engagement prompt, and hashtags.
-3. Renders a 1080×1350 branded image card (PIL) with the hook + top 3 headlines.
-4. Uploads the card to a public image host, then publishes via the Graph API's
-   two-step container flow.
-5. Rotates affiliate signals through the caption + link-in-bio.
+3. Picks a picture for the story — Claude names the scene, then image
+   generation or licensed stock search supplies it.
+4. Renders a 1080×1350 card (PIL): photo band over black, with an oversized
+   two-tone condensed headline beneath it.
+5. Publishes the card and a review page to GitHub Pages, then posts via the
+   Graph API's two-step container flow. Optionally as a Reel with audio.
+6. Rotates affiliate signals through the caption + link-in-bio.
 
 ## Ad revenue — how the money actually flows
 
@@ -85,6 +88,9 @@ And these repo variables:
 - `BRAND_HANDLE`
 - `BRAND_NAME`
 
+**Full design rationale is in [SPEC.md](SPEC.md); every manual setup step is in
+[SETUP.md](SETUP.md).**
+
 ## Layout
 
 ```
@@ -93,7 +99,9 @@ src/triagent/
 ├── config.py        # Settings, RSS feed list
 ├── news.py          # feedparser-based RSS fetcher
 ├── summarizer.py    # Claude Opus 4.7 with Pydantic-typed output
-├── image.py         # PIL branded card renderer
+├── image.py         # PIL card renderer (photo band + two-tone headline)
+├── imagery.py       # picture resolution: generation ▸ stock ▸ local ▸ none
+├── video.py         # ffmpeg Reel encoding
 ├── monetization.py  # caption assembly, affiliate rotation
 ├── publisher.py     # Instagram Graph API two-step publish
 └── __main__.py      # CLI entry
@@ -108,8 +116,8 @@ src/triagent/
 
 ## Extending
 
-- Swap the PIL card for an AI-generated image (DALL·E, Imagen) — replace
-  `image.py::render_card`.
+- Carousels. The reference accounts get depth from multi-slide posts; this
+  produces a single image or Reel.
 - Post as Reels: add a Ken Burns pan + caption overlay via ffmpeg, then hit
   `/media` with `media_type=REELS` and a `video_url`.
 - A/B test hooks: generate two briefs, publish one to a shadow account,
