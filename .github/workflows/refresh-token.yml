@@ -1,0 +1,54 @@
+name: refresh-instagram-token
+
+# Instagram Login tokens expire 60 days after issue. Refreshing resets the
+# clock to a full 60 days and needs no app secret and no re-authorization, so
+# it can run unattended. Weekly leaves a wide margin: the token would have to
+# miss roughly eight consecutive runs before it lapsed.
+#
+# Requires a repo secret GH_PAT — a fine-grained personal access token scoped
+# to this repository with "Secrets: read and write". The built-in GITHUB_TOKEN
+# cannot write secrets, so without GH_PAT the refreshed token has nowhere to
+# be stored and the job fails loudly rather than silently doing nothing.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"  # Mondays, 04:00 UTC
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install TriAgent
+        run: pip install -e .
+
+      - name: Refresh token and store it back
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_API_MODE: ${{ vars.IG_API_MODE || 'instagram_login' }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "GH_PAT is not set — the refreshed token could not be stored." >&2
+            echo "Add a fine-grained PAT with Secrets: read and write." >&2
+            exit 1
+          fi
+
+          # stdout is the token, stderr is the status line.
+          NEW_TOKEN=$(python -m triagent --mode refresh)
+
+          # Mask before the value can appear anywhere else in the log.
+          echo "::add-mask::$NEW_TOKEN"
+
+          # gh handles the libsodium sealed-box encryption the secrets API needs.
+          gh secret set IG_ACCESS_TOKEN --body "$NEW_TOKEN"
+          echo "IG_ACCESS_TOKEN updated."

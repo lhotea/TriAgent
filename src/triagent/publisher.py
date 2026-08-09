@@ -101,6 +101,42 @@ class InstagramPublisher:
         )
         return self._get("me", fields=fields)
 
+    def refresh_long_lived_token(self) -> dict:
+        """Exchange the current long-lived token for one with a fresh 60 days.
+
+        Instagram Login tokens expire 60 days after issue. Refreshing needs no
+        app secret and no re-authorization — just an unauthenticated GET with
+        the current token — which is what makes it automatable.
+
+        Meta requires the token to be long-lived, still valid, and at least 24
+        hours old. Refreshing an already-expired token is not possible; that
+        needs a fresh trip through the console.
+
+        Returns the API payload: access_token, token_type, expires_in.
+        """
+        if self.api_mode != "instagram_login":
+            raise RuntimeError(
+                "refresh_long_lived_token only applies to IG_API_MODE="
+                "'instagram_login'. Facebook-login tokens use a different "
+                "endpoint and require the app secret."
+            )
+        # Documented unversioned, so bypass the versioned base used elsewhere.
+        r = requests.get(
+            f"{API_HOSTS['instagram_login']}/refresh_access_token",
+            params={
+                "grant_type": "ig_refresh_token",
+                "access_token": self.access_token,
+            },
+            timeout=30,
+        )
+        if not r.ok:
+            log.error("token refresh failed: %s", r.text)
+            r.raise_for_status()
+        data = r.json()
+        if "access_token" not in data:
+            raise RuntimeError(f"refresh returned no access_token: {data}")
+        return data
+
     def _check_image(self, image_url: str, *, head_unsupported: list[bool]) -> None:
         """Check whether the image URL is reachable; raise ImageNotReady if not."""
         # Try HEAD first (cheap), fall back to GET if the server doesn't support HEAD.

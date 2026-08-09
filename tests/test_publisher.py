@@ -368,3 +368,66 @@ class TestImageTimeoutDiagnostics:
         ok.ok = True
         with patch("triagent.publisher.requests.head", return_value=ok):
             publisher.wait_for_image("https://x.example/daily.png", timeout_secs=5)
+
+
+class TestRefreshLongLivedToken:
+    """Tests for the 60-day token refresh."""
+
+    def test_returns_payload_on_success(self, publisher):
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = {
+            "access_token": "IGAA_new",
+            "token_type": "bearer",
+            "expires_in": 5184000,
+        }
+        with patch("triagent.publisher.requests.get", return_value=resp):
+            out = publisher.refresh_long_lived_token()
+        assert out["access_token"] == "IGAA_new"
+        assert out["expires_in"] == 5184000
+
+    def test_hits_unversioned_instagram_host(self, publisher):
+        """The refresh endpoint is documented without a version segment."""
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = {"access_token": "x", "expires_in": 1}
+        with patch("triagent.publisher.requests.get", return_value=resp) as mock_get:
+            publisher.refresh_long_lived_token()
+        url = mock_get.call_args[0][0]
+        assert url == "https://graph.instagram.com/refresh_access_token"
+        assert "/v" not in url.replace("https://", "")
+
+    def test_sends_correct_grant_type(self, publisher):
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = {"access_token": "x", "expires_in": 1}
+        with patch("triagent.publisher.requests.get", return_value=resp) as mock_get:
+            publisher.refresh_long_lived_token()
+        params = mock_get.call_args[1]["params"]
+        assert params["grant_type"] == "ig_refresh_token"
+        assert params["access_token"] == "tok_123"
+
+    def test_rejects_facebook_login_mode(self):
+        """Facebook tokens refresh differently and need the app secret."""
+        p = InstagramPublisher(
+            ig_user_id="1", access_token="t", api_mode="facebook_login"
+        )
+        with pytest.raises(RuntimeError, match="instagram_login"):
+            p.refresh_long_lived_token()
+
+    def test_raises_when_response_lacks_token(self, publisher):
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = {"error": {"message": "token too new"}}
+        with patch("triagent.publisher.requests.get", return_value=resp):
+            with pytest.raises(RuntimeError, match="no access_token"):
+                publisher.refresh_long_lived_token()
+
+    def test_raises_on_http_error(self, publisher):
+        resp = MagicMock()
+        resp.ok = False
+        resp.text = "expired"
+        resp.raise_for_status.side_effect = requests.HTTPError("400")
+        with patch("triagent.publisher.requests.get", return_value=resp):
+            with pytest.raises(requests.HTTPError):
+                publisher.refresh_long_lived_token()

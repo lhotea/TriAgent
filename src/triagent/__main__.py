@@ -13,7 +13,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="triagent")
     parser.add_argument(
         "--mode",
-        choices=["full", "build", "publish", "whoami", "feedcheck"],
+        choices=["full", "build", "publish", "whoami", "feedcheck", "refresh"],
         default="full",
         help=(
             "full: build + publish in one process. "
@@ -43,6 +43,25 @@ def main() -> int:
     except RuntimeError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.mode == "refresh":
+        # stdout carries ONLY the new token so a workflow can capture it with
+        # $(...); everything human-readable goes to stderr. The caller is
+        # responsible for masking it before it can reach a log.
+        if not settings.ig_access_token:
+            print("config error: IG_ACCESS_TOKEN is not set", file=sys.stderr)
+            return 2
+        from .publisher import InstagramPublisher
+
+        client = InstagramPublisher(
+            ig_user_id=settings.ig_user_id or "me",
+            access_token=settings.ig_access_token,
+        )
+        data = client.refresh_long_lived_token()
+        days = int(data.get("expires_in", 0)) // 86400
+        print(f"token refreshed; valid for a further {days} days", file=sys.stderr)
+        print(data["access_token"])
+        return 0
 
     if args.mode == "feedcheck":
         from .news import check_feeds
