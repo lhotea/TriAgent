@@ -26,7 +26,7 @@ def test_daily_brief_model(sample_brief):
     """DailyBrief validates all required fields."""
     assert sample_brief.hook == "Kemenz takes Kona in a photo finish"
     assert len(sample_brief.headlines) == 3
-    assert len(sample_brief.hashtags) == 25
+    assert len(sample_brief.hashtags) == 6
     assert "triathlon" in sample_brief.hashtags
 
 
@@ -41,7 +41,7 @@ def test_daily_brief_min_max_headlines():
             ],
             caption_body="Body",
             engagement_prompt="Question?",
-            hashtags=["tag1", "tag2", "tag3", "tag4", "tag5"],
+            hashtags=["t1", "t2", "t3", "t4", "t5", "t6"],
         )
 
     with pytest.raises(Exception):  # Pydantic validation error
@@ -57,7 +57,7 @@ def test_daily_brief_min_max_headlines():
             ],
             caption_body="Body",
             engagement_prompt="Question?",
-            hashtags=["tag1", "tag2", "tag3", "tag4", "tag5"],
+            hashtags=["t1", "t2", "t3", "t4", "t5", "t6"],
         )
 
 
@@ -73,7 +73,7 @@ def test_daily_brief_min_max_hashtags():
             ],
             caption_body="Body",
             engagement_prompt="Question?",
-            hashtags=["tag1", "tag2"],  # Too few
+            hashtags=["tag1", "tag2"],  # Too few (min 6)
         )
 
     with pytest.raises(Exception):  # Pydantic validation error
@@ -86,7 +86,7 @@ def test_daily_brief_min_max_hashtags():
             ],
             caption_body="Body",
             engagement_prompt="Question?",
-            hashtags=[f"tag{i}" for i in range(30)],  # Too many
+            hashtags=[f"tag{i}" for i in range(30)],  # Too many (max 10)
         )
 
 

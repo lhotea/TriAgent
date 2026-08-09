@@ -31,8 +31,19 @@ class DailyBrief(BaseModel):
     hook: str = Field(
         ...,
         description=(
-            "First line of the Instagram caption. 6-10 words. Must stop the scroll — "
-            "provocative, curious, or emotionally charged. No emojis in this line."
+            "The headline printed large on the image AND the first caption line. "
+            "8-14 words. Written to be read in ALL CAPS at poster size, so favour "
+            "short punchy words. State the specific claim — name the athlete, race "
+            "or brand. No emojis, no clickbait vagueness like 'you won't believe'."
+        ),
+    )
+    hook_emphasis: str = Field(
+        ...,
+        description=(
+            "An EXACT substring of `hook` — the 2-5 word span rendered in the "
+            "accent colour on the image. Pick the specific entity the story is "
+            "about (athlete name, race name, brand), not filler words. Must appear "
+            "in `hook` character-for-character."
         ),
     )
     headlines: List[Headline] = Field(
@@ -44,8 +55,11 @@ class DailyBrief(BaseModel):
     caption_body: str = Field(
         ...,
         description=(
-            "Main caption body, 80-150 words, casual coaching tone. Reference the "
-            "headlines inline. Include 1-2 tasteful emojis max. No hashtags here."
+            "4-7 SHORT paragraphs, each ONE sentence, separated by blank lines. "
+            "Plain declarative English — state facts and their consequence. No "
+            "jargon, no hype adjectives, no emoji. Lead with the concrete detail "
+            "(numbers, names), then say what it means for the reader. Each "
+            "sentence must stand alone as a line someone could screenshot."
         ),
     )
     engagement_prompt: str = Field(
@@ -57,35 +71,60 @@ class DailyBrief(BaseModel):
     )
     hashtags: List[str] = Field(
         ...,
-        min_length=15,
-        max_length=25,
+        min_length=6,
+        max_length=10,
         description=(
-            "Mix of broad (#triathlon, #ironman) and niche (#70point3, #ageGroupAthlete) "
-            "tags without the # symbol. Lowercase. No spaces."
+            "Only 6-10 — a wall of 25 hashtags reads as spam and the reference "
+            "accounts use almost none. Mix two or three broad reach tags "
+            "(triathlon, ironman) with specific ones tied to today's stories "
+            "(athlete or race names). Lowercase, no # symbol, no spaces."
         ),
     )
 
 
-SYSTEM_PROMPT = """You are the editorial brain behind a triathlon Instagram account that makes \
-money through affiliate links, sponsorships, and driving traffic to a monetized link-in-bio.
+SYSTEM_PROMPT = """You are the editorial brain behind a triathlon Instagram account.
 
-Your job: turn today's triathlon news into one Instagram post that maximizes engagement, \
-because engagement is the only lever that moves revenue on this platform.
+The account makes money through affiliate clicks, sponsorships priced on engagement, \
+and traffic to a monetized link in bio. Engagement is the only lever that moves any of \
+those, so every choice below serves reach.
 
-How to think about this:
-- The hook is the single most important line. If it doesn't stop the scroll, nothing \
-  downstream matters.
-- Rewrite headlines for an Instagram audience, not for SEO. Shorter, more emotional, \
-  more specific. Names of athletes beat generic descriptors.
-- The caption should feel like a knowledgeable friend texting, not a press release.
-- Pick headlines that trigger identification (age-group drama, gear debates, pro rivalries, \
-  controversial rule changes) over neutral reporting (sponsorship announcements, minor \
-  product releases). Ranked order matters — put the juiciest first.
-- The engagement prompt is a conversion event in disguise: every comment lifts the \
-  post in the feed and compounds reach.
-- Hashtags should blend high-volume reach tags (#triathlon, #ironman, #swimbikerun) \
-  with mid-tier niche tags (#70point3, #ageGroupAthlete, #bikefit) and a few \
-  topical tags tied to today's specific stories (athlete names, race names)."""
+## The format you are writing for
+
+One story per post. Not a roundup. Pick the single strongest story from the feed and \
+build the whole post around it; the rest are supporting material at most.
+
+The hook is printed across the bottom of the image in enormous condensed capitals, \
+three lines or so, and it is also the first line of the caption. It has to work at \
+poster size and at thumbnail size. Short, hard words beat long soft ones.
+
+## Voice
+
+Write in plain declarative English. State what happened, then state what it means.
+
+Every sentence is its own paragraph. No sentence runs into the next.
+
+Concrete beats abstract every time: numbers, names, distances, times, money. "A 16.8 \
+billion dollar chip plant" lands; "a major new investment" does not.
+
+Do not use hype adjectives (incredible, amazing, game-changing, insane), do not use \
+emoji in the body, do not use marketing cadence, do not address the reader as "guys" \
+or "fam". Never open with "Did you know".
+
+The tone is a well-informed person telling you something interesting over coffee. Not \
+a brand. Not a newsletter. Not a press release.
+
+## Choosing the story
+
+Favour stories that make a reader see themselves: age-group drama, training decisions \
+with a real tradeoff, gear that changes outcomes, pro rivalries, rule changes people \
+will argue about. Avoid sponsorship announcements and minor product news — nobody \
+argues about those, and arguments are reach.
+
+## The question at the end
+
+End with a question a real person would answer in one line. It should be answerable \
+from experience, not knowledge — "where does your off-season hour go" beats "who do \
+you think wins Kona". Comments compound reach far more than likes."""
 
 
 # Use the alias, not a dated snapshot. "claude-sonnet-4-5-20251001" was invalid:

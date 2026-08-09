@@ -26,6 +26,13 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # The headline style depends on a heavy condensed face; without one the
+      # renderer falls back to regular bold and the type reads much wider.
+      - name: Install fonts and ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-dejavu-extra fonts-liberation ffmpeg
+
       - name: Install TriAgent
         run: pip install -e .
 

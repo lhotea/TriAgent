@@ -47,6 +47,9 @@ def assemble_caption(
     today_seed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
     has_affiliate = bool(_rotate(affiliate_urls, today_seed))
 
+    # Structure mirrors the reference account: one idea per paragraph, a
+    # question, then a follow prompt. The model already returns caption_body as
+    # one-sentence paragraphs, so it is inserted verbatim.
     parts: list[str] = [
         brief.hook.strip(),
         "",
@@ -59,15 +62,20 @@ def assemble_caption(
     if has_affiliate:
         suffix = f" through {brand_handle}" if brand_handle.strip() else ""
         parts.append(
-            "⚡ Today's featured deal is pinned at the top of our bio link. "
-            f"Every purchase{suffix} keeps this feed running."
+            "The featured deal is pinned at the top of the bio link, and every "
+            f"purchase{suffix} keeps this going."
         )
-    parts.append("")
 
+    handle = brand_handle.strip()
+    if handle:
+        parts += ["", f"Into triathlon? Follow {handle}"]
+
+    # A small tag set, not a wall. Reference accounts at scale use almost none;
+    # a handful still helps discovery for an account that is still small.
     tags = " ".join(f"#{t.lstrip('#').lower()}" for t in brief.hashtags)
-    parts.append(tags)
+    if tags:
+        parts += ["", tags]
 
-    # IG caption cap is 2200 chars. Trim hashtags first if we overshoot.
     caption = "\n".join(parts)
     if len(caption) > 2200:
         trimmed_tags = tags[: 2200 - len(caption) + len(tags) - 10].rsplit(" ", 1)[0]

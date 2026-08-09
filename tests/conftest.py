@@ -95,6 +95,7 @@ def sample_brief():
 
     return DailyBrief(
         hook="Kemenz takes Kona in a photo finish",
+        hook_emphasis="Kemenz",
         headlines=[
             Headline(
                 title="Kemenz Wins Ironman Kona in Dramatic Swim Exit",
@@ -118,29 +119,10 @@ def sample_brief():
         hashtags=[
             "triathlon",
             "ironman",
-            "ironmankona",
-            "triathlete",
             "swimbikerun",
-            "ironmanrace",
-            "trainswimbikerun",
-            "agegroupathlete",
+            "kona",
             "70point3",
-            "triathlontraining",
-            "bikerepair",
-            "runcoach",
-            "swimtech",
-            "trigear",
-            "ironmanlife",
-            "triathloncoach",
-            "enduranceathlete",
-            "ironmantraining",
-            "triracing",
-            "triathloncommunity",
-            "triathlonlife",
-            "ironman2026",
-            "trilife",
-            "duathlon",
-            "brickworkout",
+            "agegroupathlete",
         ],
     )
 
