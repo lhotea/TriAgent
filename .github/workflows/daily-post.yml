@@ -40,6 +40,8 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FEEDS: ${{ vars.FEEDS }}
+          IMAGE_GEN_API_KEY: ${{ secrets.IMAGE_GEN_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PUBLIC_IMAGE_BASE_URL: ${{ secrets.PUBLIC_IMAGE_BASE_URL }}
           AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}

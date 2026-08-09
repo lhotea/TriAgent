@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .config import ASSETS_DIR, Settings
 from .image import pick_background, render_card, render_reel_frame
+from .imagery import resolve_background
 from .monetization import assemble_caption
 from .news import fetch_recent_widening
 from .publisher import InstagramPublisher
@@ -82,9 +83,15 @@ def build(settings: Settings) -> RunResult:
     brief = summarizer.build_brief(top_items, brand_name=settings.brand_name)
 
     seed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
-    background = pick_background(BACKGROUNDS_DIR, seed)
-    if background:
-        log.info("using background photo %s", background.name)
+    # Claude chose the scene; resolve_background renders or finds it, falling
+    # back through stock search to the local directory.
+    background = resolve_background(
+        getattr(brief, "image_query", "") or "",
+        settings.image_path.with_name("background.jpg"),
+        gen_key=settings.image_gen_api_key,
+        stock_key=settings.stock_api_key,
+        fallback=pick_background(BACKGROUNDS_DIR, seed),
+    )
 
     render_card(
         brief,

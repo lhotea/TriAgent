@@ -96,6 +96,7 @@ def sample_brief():
     return DailyBrief(
         hook="Kemenz takes Kona in a photo finish",
         hook_emphasis="Kemenz",
+        image_query="triathlete running out of surf at dawn",
         headlines=[
             Headline(
                 title="Kemenz Wins Ironman Kona in Dramatic Swim Exit",

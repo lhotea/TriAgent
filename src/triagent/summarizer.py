@@ -46,6 +46,17 @@ class DailyBrief(BaseModel):
             "in `hook` character-for-character."
         ),
     )
+    image_query: str = Field(
+        ...,
+        description=(
+            "What the post's picture should show, as a short visual description "
+            "(3-8 words) of a CONCRETE SCENE — e.g. 'triathlete running out of "
+            "surf at dawn', 'road bike wheel close up'. Describe the photograph, "
+            "not the topic: no words like 'news', 'analysis' or 'training plan', "
+            "and no text, logos, charts or brand names, which image sources "
+            "handle badly. It must relate to the lead story."
+        ),
+    )
     headlines: List[Headline] = Field(
         ...,
         min_length=3,

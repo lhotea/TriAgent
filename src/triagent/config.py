@@ -85,6 +85,10 @@ class Settings:
     post_format: str = "image"
     reel_audio: str | None = None
     reel_seconds: int = 8
+    # Optional picture sources, tried in this order. Both absent means the card
+    # uses whatever is in assets/backgrounds/, then its headline-led layout.
+    image_gen_api_key: str | None = None
+    stock_api_key: str | None = None
     max_headlines: int = 6
     image_path: Path = ASSETS_DIR / "daily.png"
 
@@ -108,6 +112,8 @@ class Settings:
             post_format=(os.environ.get("POST_FORMAT") or "image").lower(),
             reel_audio=_optional("REEL_AUDIO"),
             reel_seconds=int(os.environ.get("REEL_SECONDS") or 8),
+            image_gen_api_key=_optional("IMAGE_GEN_API_KEY"),
+            stock_api_key=_optional("PEXELS_API_KEY"),
             brand_handle=os.environ.get("BRAND_HANDLE") or "@tripulsedaily",
             brand_name=os.environ.get("BRAND_NAME") or "TriPulse Daily",
             affiliate_urls=affiliate,
