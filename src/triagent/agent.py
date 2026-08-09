@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .config import Settings
 from .image import render_card
 from .monetization import assemble_caption
-from .news import fetch_recent
+from .news import fetch_recent_widening
 from .publisher import InstagramPublisher
 from .review import render_review_page
 from .summarizer import DailyBrief, Summarizer
@@ -50,9 +50,12 @@ def build(settings: Settings) -> RunResult:
     without regenerating (which would produce a different caption than the
     one already baked into the rendered image).
     """
-    items = fetch_recent(settings.feeds, max_age_hours=36, per_feed_limit=10)
+    items = fetch_recent_widening(settings.feeds, per_feed_limit=10)
     if not items:
-        raise RuntimeError("no fresh triathlon news found in the last 36 hours")
+        raise RuntimeError(
+            "no triathlon news found in any time window — every feed is likely "
+            "unreachable. Run `python -m triagent --mode feedcheck` to see which."
+        )
 
     top_items = items[: max(settings.max_headlines * 2, 12)]
 

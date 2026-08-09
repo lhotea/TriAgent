@@ -253,3 +253,102 @@ class TestFetchRecent:
             items = fetch_recent(["http://test/old"], max_age_hours=36)
 
         assert items == []
+
+
+class TestWideningFetch:
+    """Tests for fetch_recent_widening — resilience when news is sparse."""
+
+    def test_returns_first_window_that_has_items(self):
+        from triagent.news import fetch_recent_widening
+
+        with patch("triagent.news.fetch_recent") as mock_fetch:
+            mock_fetch.side_effect = [[], [], ["item"]]
+            out = fetch_recent_widening(["u"], windows=(36, 96, 240))
+
+        assert out == ["item"]
+        assert mock_fetch.call_count == 3
+
+    def test_stops_at_first_non_empty_window(self):
+        """A normal day must not widen — same-day news is the whole point."""
+        from triagent.news import fetch_recent_widening
+
+        with patch("triagent.news.fetch_recent") as mock_fetch:
+            mock_fetch.side_effect = [["fresh"], ["older"]]
+            out = fetch_recent_widening(["u"], windows=(36, 96))
+
+        assert out == ["fresh"]
+        assert mock_fetch.call_count == 1
+
+    def test_returns_empty_when_all_windows_dry(self):
+        from triagent.news import fetch_recent_widening
+
+        with patch("triagent.news.fetch_recent", return_value=[]):
+            assert fetch_recent_widening(["u"], windows=(36, 96)) == []
+
+    def test_passes_window_to_fetch_recent(self):
+        from triagent.news import fetch_recent_widening
+
+        with patch("triagent.news.fetch_recent") as mock_fetch:
+            mock_fetch.side_effect = [[], ["x"]]
+            fetch_recent_widening(["u"], windows=(12, 48))
+
+        assert mock_fetch.call_args_list[0].kwargs["max_age_hours"] == 12
+        assert mock_fetch.call_args_list[1].kwargs["max_age_hours"] == 48
+
+
+class TestFeedHeaders:
+    """The default requests user-agent gets 403'd by several publishers."""
+
+    def test_sends_browser_user_agent(self):
+        from triagent.news import _fetch_feed
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"<rss></rss>"
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("triagent.news.requests.get", return_value=mock_resp) as mock_get:
+            _fetch_feed("https://example.com/feed")
+
+        ua = mock_get.call_args[1]["headers"]["User-Agent"]
+        assert "Mozilla" in ua
+        assert "python-requests" not in ua
+
+
+class TestCheckFeeds:
+    """Tests for the feedcheck diagnostic."""
+
+    def test_reports_failure_with_reason(self):
+        from triagent.news import check_feeds
+
+        with patch("triagent.news._fetch_feed", side_effect=ValueError("boom")):
+            rows = check_feeds(["https://dead.example/feed"])
+
+        assert rows[0]["ok"] is False
+        assert "boom" in rows[0]["error"]
+        assert rows[0]["entries"] == 0
+
+    def test_reports_success_with_entry_count(self):
+        from triagent.news import check_feeds
+
+        parsed = MagicMock()
+        parsed.entries = [{"published": "Mon, 01 Jan 2035 00:00:00 GMT"}]
+        parsed.feed = {"title": "Example"}
+
+        with patch("triagent.news._fetch_feed", return_value=parsed):
+            rows = check_feeds(["https://ok.example/feed"])
+
+        assert rows[0]["ok"] is True
+        assert rows[0]["entries"] == 1
+
+    def test_empty_feed_counts_as_failure(self):
+        """A feed that parses but carries nothing is useless to us."""
+        from triagent.news import check_feeds
+
+        parsed = MagicMock()
+        parsed.entries = []
+        parsed.feed = {"title": "Empty"}
+
+        with patch("triagent.news._fetch_feed", return_value=parsed):
+            rows = check_feeds(["https://empty.example/feed"])
+
+        assert rows[0]["ok"] is False

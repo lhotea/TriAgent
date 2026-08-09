@@ -36,8 +36,8 @@ class TestBuild:
     def test_build_raises_on_no_news(self, mock_settings):
         """build() raises RuntimeError when no news items are found."""
         with (
-            patch("triagent.agent.fetch_recent", return_value=[]),
-            pytest.raises(RuntimeError, match="no fresh triathlon news"),
+            patch("triagent.agent.fetch_recent_widening", return_value=[]),
+            pytest.raises(RuntimeError, match="no triathlon news found"),
         ):
             build(mock_settings)
 
@@ -48,7 +48,7 @@ class TestBuild:
         mock_settings.image_path.with_name.return_value = mock_caption_path
 
         with (
-            patch("triagent.agent.fetch_recent", return_value=sample_news_items),
+            patch("triagent.agent.fetch_recent_widening", return_value=sample_news_items),
             patch("triagent.agent.Summarizer") as mock_summ_cls,
             patch("triagent.agent.render_card") as mock_render,
             patch("triagent.agent.assemble_caption", return_value="Test caption") as mock_caption,
@@ -86,7 +86,7 @@ class TestBuild:
         mock_settings.image_path.with_name.return_value = mock_caption_path
 
         with (
-            patch("triagent.agent.fetch_recent", return_value=many_items),
+            patch("triagent.agent.fetch_recent_widening", return_value=many_items),
             patch("triagent.agent.Summarizer") as mock_summ_cls,
             patch("triagent.agent.render_card"),
             patch("triagent.agent.assemble_caption", return_value="Caption"),
@@ -153,7 +153,7 @@ class TestRun:
         mock_settings.image_path.with_name.return_value = mock_caption_path
 
         with (
-            patch("triagent.agent.fetch_recent", return_value=sample_news_items),
+            patch("triagent.agent.fetch_recent_widening", return_value=sample_news_items),
             patch("triagent.agent.Summarizer") as mock_summ_cls,
             patch("triagent.agent.render_card"),
             patch("triagent.agent.assemble_caption", return_value="Caption"),
@@ -175,7 +175,7 @@ class TestRun:
         mock_settings.image_path.with_name.return_value = mock_caption_path
 
         with (
-            patch("triagent.agent.fetch_recent", return_value=sample_news_items),
+            patch("triagent.agent.fetch_recent_widening", return_value=sample_news_items),
             patch("triagent.agent.Summarizer") as mock_summ_cls,
             patch("triagent.agent.render_card"),
             patch("triagent.agent.assemble_caption", return_value="Caption"),

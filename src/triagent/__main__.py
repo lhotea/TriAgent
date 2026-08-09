@@ -13,7 +13,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="triagent")
     parser.add_argument(
         "--mode",
-        choices=["full", "build", "publish", "whoami"],
+        choices=["full", "build", "publish", "whoami", "feedcheck"],
         default="full",
         help=(
             "full: build + publish in one process. "
@@ -43,6 +43,22 @@ def main() -> int:
     except RuntimeError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.mode == "feedcheck":
+        from .news import check_feeds
+
+        rows = check_feeds(settings.feeds)
+        for row in rows:
+            mark = "OK  " if row["ok"] else "FAIL"
+            detail = (
+                f"{row['entries']} entries, newest {row.get('newest_age_hours')}h old"
+                if row["ok"]
+                else row.get("error", "")
+            )
+            print(f"{mark} {row['url']}\n     {detail}")
+        working = sum(1 for r in rows if r["ok"])
+        print(f"\n{working}/{len(rows)} feeds usable")
+        return 0 if working else 1
 
     if args.mode == "whoami":
         # Setup helper: verify the token and print the account ID for IG_USER_ID.

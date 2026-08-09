@@ -12,6 +12,14 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 log = logging.getLogger(__name__)
 
+FEED_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+}
+
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -58,9 +66,42 @@ class NewsItem:
     reraise=True,
 )
 def _fetch_feed(feed_url: str) -> feedparser.Feed:
-    resp = requests.get(feed_url, timeout=10)
+    # Many publishers reject the default "python-requests/x.y" agent outright —
+    # tri247 returns 403 for it. Identify as a normal browser instead.
+    resp = requests.get(feed_url, timeout=10, headers=FEED_HEADERS)
     resp.raise_for_status()
     return feedparser.parse(resp.content)
+
+
+def check_feeds(feed_urls: list[str]) -> list[dict]:
+    """Probe each feed and report status, without applying any age filter.
+
+    Feed URLs rot — paths move, domains lapse, publishers start blocking bots.
+    This gives a straight answer about which sources are actually usable
+    instead of requiring a failed production run to find out.
+    """
+    report: list[dict] = []
+    for feed_url in feed_urls:
+        row: dict = {"url": feed_url}
+        try:
+            parsed = _fetch_feed(feed_url)
+            entries = parsed.entries or []
+            row["ok"] = bool(entries)
+            row["entries"] = len(entries)
+            row["title"] = parsed.feed.get("title", "")
+            if entries:
+                newest = max(_parse_dt(e) for e in entries)
+                row["newest_age_hours"] = round(
+                    (dt.datetime.now(dt.timezone.utc) - newest).total_seconds() / 3600, 1
+                )
+            else:
+                row["error"] = "parsed but contained no entries"
+        except Exception as exc:
+            row["ok"] = False
+            row["entries"] = 0
+            row["error"] = f"{type(exc).__name__}: {exc}"
+        report.append(row)
+    return report
 
 
 def fetch_recent(
@@ -72,10 +113,12 @@ def fetch_recent(
     now = dt.datetime.now(dt.timezone.utc)
     items: list[NewsItem] = []
     seen_urls: set[str] = set()
+    live_feeds = 0
 
     for feed_url in feed_urls:
         try:
             parsed = _fetch_feed(feed_url)
+            live_feeds += 1
         except Exception as exc:
             log.warning("feed fetch failed for %s: %s", feed_url, exc)
             continue
@@ -105,5 +148,42 @@ def fetch_recent(
             )
 
     items.sort(key=lambda i: i.published, reverse=True)
-    log.info("fetched %d items from %d feeds", len(items), len(feed_urls))
+    log.info(
+        "fetched %d items; %d/%d feeds reachable (window %.0fh)",
+        len(items),
+        live_feeds,
+        len(feed_urls),
+        max_age_hours,
+    )
+    if live_feeds == 0:
+        log.error("no feed was reachable — check the feed list with --mode feedcheck")
     return items
+
+
+def fetch_recent_widening(
+    feed_urls: list[str],
+    *,
+    windows: tuple[float, ...] = (36, 96, 240),
+    per_feed_limit: int = 10,
+) -> list[NewsItem]:
+    """Fetch with progressively wider time windows until something turns up.
+
+    A quiet news day, a publisher pausing, or a couple of dead feeds shouldn't
+    take the whole run down — a slightly older story beats no post at all. The
+    windows are tried in order and the first non-empty result wins, so normal
+    days still get same-day news.
+    """
+    for window in windows:
+        items = fetch_recent(
+            feed_urls, max_age_hours=window, per_feed_limit=per_feed_limit
+        )
+        if items:
+            if window != windows[0]:
+                log.warning(
+                    "no items within %.0fh; widened to %.0fh and found %d",
+                    windows[0],
+                    window,
+                    len(items),
+                )
+            return items
+    return []

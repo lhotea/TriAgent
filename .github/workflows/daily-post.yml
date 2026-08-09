@@ -32,6 +32,7 @@ jobs:
       - name: Build card + caption
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FEEDS: ${{ vars.FEEDS }}
           PUBLIC_IMAGE_BASE_URL: ${{ secrets.PUBLIC_IMAGE_BASE_URL }}
           AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
@@ -62,6 +63,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FEEDS: ${{ vars.FEEDS }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_API_MODE: ${{ vars.IG_API_MODE || 'instagram_login' }}

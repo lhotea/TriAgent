@@ -12,13 +12,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = REPO_ROOT / "assets"
 ASSETS_DIR.mkdir(exist_ok=True)
 
+# Verify changes to this list with `python -m triagent --mode feedcheck` before
+# relying on them. Run #117 showed several of the original entries had never
+# worked: two domains no longer resolve, one path 404s, one blocks bots.
+#
+# Status as of the last observed production run:
+#   triathlete.com  — reachable, parses
+#   tri247.com      — returned 403 for the default requests user-agent; a
+#                     browser UA is now sent, which usually clears it
+#   slowtwitch.com  — /rss/news.rss returned 404; path below is a guess and
+#                     needs feedcheck to confirm
+# Removed: trinewsnetwork.com and worldtriathlon.org (DNS did not resolve).
 DEFAULT_FEEDS = [
     "https://www.triathlete.com/feed/",
-    "https://www.slowtwitch.com/rss/news.rss",
     "https://www.tri247.com/feed",
-    "https://www.trinewsnetwork.com/feed/",
-    "https://www.triradar.com/feed/",
-    "https://www.worldtriathlon.org/rss/news",
+    "https://www.slowtwitch.com/feed",
 ]
 
 
@@ -55,7 +63,13 @@ class Settings:
         affiliate_raw = os.environ.get("AFFILIATE_URLS", "").strip()
         affiliate = [u.strip() for u in affiliate_raw.split(",") if u.strip()]
         base = _optional("PUBLIC_IMAGE_BASE_URL")
+        # Feeds rot faster than code ships — allow overriding without a release.
+        feeds_raw = os.environ.get("FEEDS", "").strip()
+        feeds = [f.strip() for f in feeds_raw.split(",") if f.strip()] or list(
+            DEFAULT_FEEDS
+        )
         return cls(
+            feeds=feeds,
             anthropic_api_key=_required("ANTHROPIC_API_KEY"),
             ig_user_id=_optional("IG_USER_ID"),
             ig_access_token=_optional("IG_ACCESS_TOKEN"),
