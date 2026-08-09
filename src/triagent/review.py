@@ -13,8 +13,17 @@ import datetime as dt
 import html
 import logging
 from pathlib import Path
+from typing import Protocol, Sequence
 
 log = logging.getLogger(__name__)
+
+
+class Story(Protocol):
+    """Anything with a title, url and source — NewsItem satisfies this."""
+
+    title: str
+    url: str
+    source: str
 
 _PAGE = """<!doctype html>
 <html lang="en">
@@ -45,6 +54,16 @@ _PAGE = """<!doctype html>
   }}
   .ok {{ opacity: 0; transition: opacity .2s; font-size: .875rem; align-self: center; }}
   .ok.show {{ opacity: .8; }}
+  h2 {{ font-size: 1rem; text-transform: uppercase; letter-spacing: .06em;
+        opacity: .6; margin: 32px 0 12px; }}
+  ol.stories {{ padding-left: 0; list-style: none; margin: 0; }}
+  ol.stories li {{ padding: 14px 0; border-bottom: 1px solid rgba(128,128,128,.25); }}
+  ol.stories a {{ color: inherit; font-weight: 600; text-decoration: none; }}
+  ol.stories a:hover {{ text-decoration: underline; }}
+  .src {{ display: block; font-size: .8rem; opacity: .55; margin-top: 4px;
+          text-transform: uppercase; letter-spacing: .04em; }}
+  details {{ margin-top: 32px; }}
+  summary {{ cursor: pointer; opacity: .7; }}
 </style>
 </head>
 <body>
@@ -53,13 +72,20 @@ _PAGE = """<!doctype html>
 
 <img src="daily.png" alt="Today's card">
 
-<div class="bar">
-  <button id="copy">Copy caption</button>
-  <a class="btn" href="daily.png" download>Download image</a>
-  <span class="ok" id="ok">copied</span>
-</div>
+<h2>Today's stories</h2>
+<ol class="stories">
+{stories}
+</ol>
 
-<pre id="caption">{caption}</pre>
+<details>
+  <summary>Caption (for posting)</summary>
+  <div class="bar">
+    <button id="copy">Copy caption</button>
+    <a class="btn" href="daily.png" download>Download image</a>
+    <span class="ok" id="ok">copied</span>
+  </div>
+  <pre id="caption">{caption}</pre>
+</details>
 
 <script>
 document.getElementById('copy').addEventListener('click', async () => {{
@@ -74,16 +100,33 @@ document.getElementById('copy').addEventListener('click', async () => {{
 """
 
 
-def render_review_page(caption: str, brand_name: str, out_path: Path) -> Path:
+def render_review_page(
+    caption: str,
+    brand_name: str,
+    out_path: Path,
+    stories: Sequence[Story] = (),
+) -> Path:
     """Write a self-contained review page next to the rendered card.
 
     The page references ``daily.png`` relatively, so it works anywhere the two
     files sit side by side — including the gh-pages branch.
+
+    ``stories`` become real links to the source articles. The post's CTA sends
+    people here for "full stories", so the page has to actually contain them;
+    without the links it's a dead end and the CTA is a lie.
     """
+    items = "\n".join(
+        f'  <li><a href="{html.escape(s.url, quote=True)}" target="_blank" '
+        f'rel="noopener">{html.escape(s.title)}</a>'
+        f'<span class="src">{html.escape(s.source)}</span></li>'
+        for s in stories
+    ) or "  <li>No sources recorded for today.</li>"
+
     page = _PAGE.format(
         brand=html.escape(brand_name),
         date=dt.datetime.now(dt.timezone.utc).strftime("%A, %d %B %Y"),
         caption=html.escape(caption),
+        stories=items,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(page, encoding="utf-8")

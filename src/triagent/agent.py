@@ -75,10 +75,15 @@ def build(settings: Settings) -> RunResult:
 
     # Human-postable fallback: card + caption on one page, published alongside
     # the image. Keeps the pipeline useful when API publishing is unavailable.
+    # Link the actual sources: the post's CTA points here for "full stories",
+    # so this page has to be able to deliver them. Use the items the brief was
+    # built from — Claude rewrites headlines, so its output can't be mapped
+    # back to URLs reliably, but these are exactly what it read.
     render_review_page(
         caption,
         brand_name=settings.brand_name,
         out_path=settings.image_path.with_name("index.html"),
+        stories=top_items[: settings.max_headlines],
     )
     log.info("caption written to %s", caption_path)
 

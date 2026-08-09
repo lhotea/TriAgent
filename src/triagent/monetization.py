@@ -6,6 +6,18 @@ import hashlib
 from .summarizer import DailyBrief
 
 
+def _cta(brand_handle: str, *, has_affiliate: bool) -> str:
+    """Build the link-in-bio call to action.
+
+    Two things it must not do: promise "gear picks" when no affiliate links are
+    configured, and render an empty pair of brackets when BRAND_HANDLE is unset.
+    """
+    what = "Full stories + today's gear picks" if has_affiliate else "Full stories"
+    handle = brand_handle.strip()
+    tail = f" ({handle})" if handle else ""
+    return f"🔗 {what} → link in bio{tail}"
+
+
 def _rotate(urls: list[str], seed: str) -> str | None:
     if not urls:
         return None
@@ -42,12 +54,13 @@ def assemble_caption(
         "",
         brief.engagement_prompt.strip(),
         "",
-        f"🔗 Full stories + today's gear picks → link in bio ({brand_handle})",
+        _cta(brand_handle, has_affiliate=has_affiliate),
     ]
     if has_affiliate:
+        suffix = f" through {brand_handle}" if brand_handle.strip() else ""
         parts.append(
-            f"⚡ Today's featured deal is pinned at the top of our bio link. "
-            f"Every purchase through {brand_handle} keeps this feed running."
+            "⚡ Today's featured deal is pinned at the top of our bio link. "
+            f"Every purchase{suffix} keeps this feed running."
         )
     parts.append("")
 

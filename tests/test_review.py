@@ -52,3 +52,41 @@ def test_preserves_caption_newlines(tmp_path):
 def test_creates_parent_directory(tmp_path):
     out = render_review_page("c", "B", tmp_path / "nested" / "deep" / "index.html")
     assert out.exists()
+
+
+class _S:
+    def __init__(self, title, url, source):
+        self.title, self.url, self.source = title, url, source
+
+
+class TestStoryLinks:
+    """The post's CTA sends people here for stories, so they must be here."""
+
+    def test_renders_story_links(self, tmp_path):
+        page = render_review_page(
+            "cap",
+            "Brand",
+            tmp_path / "i.html",
+            stories=[_S("Big race news", "https://ex.com/a", "Triathlete")],
+        ).read_text("utf-8")
+        assert 'href="https://ex.com/a"' in page
+        assert "Big race news" in page
+        assert "Triathlete" in page
+
+    def test_links_open_in_new_tab_safely(self, tmp_path):
+        page = render_review_page(
+            "c", "B", tmp_path / "i.html",
+            stories=[_S("t", "https://ex.com/a", "s")],
+        ).read_text("utf-8")
+        assert 'rel="noopener"' in page
+
+    def test_escapes_story_fields(self, tmp_path):
+        page = render_review_page(
+            "c", "B", tmp_path / "i.html",
+            stories=[_S("<script>x</script>", "https://ex.com/a", "s")],
+        ).read_text("utf-8")
+        assert "<script>x</script>" not in page
+
+    def test_handles_no_stories(self, tmp_path):
+        page = render_review_page("c", "B", tmp_path / "i.html").read_text("utf-8")
+        assert "No sources recorded" in page

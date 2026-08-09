@@ -114,7 +114,10 @@ def render_card(brief: DailyBrief, brand_name: str, out_path: Path) -> Path:
 
     # Footer CTA
     cta_font = _load_font(28, bold=True)
-    cta = "SWIPE LINK IN BIO FOR FULL STORIES →"
+    # Not "SWIPE" — this is a single static image, so there is nothing to swipe.
+    # A CTA that describes an interaction the post doesn't support reads as
+    # careless and costs credibility.
+    cta = "FULL STORIES → LINK IN BIO"
     draw.text((MARGIN, H - MARGIN - 40), cta, fill=ACCENT, font=cta_font)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -96,8 +96,12 @@ class Settings:
             ig_user_id=_optional("IG_USER_ID"),
             ig_access_token=_optional("IG_ACCESS_TOKEN"),
             public_image_base_url=base.rstrip("/") if base else None,
-            brand_handle=os.environ.get("BRAND_HANDLE", "@tripulsedaily"),
-            brand_name=os.environ.get("BRAND_NAME", "TriPulse Daily"),
+            # `or` rather than a get() default: GitHub Actions substitutes an
+            # empty string for an unset `vars.X`, so the env var exists but is
+            # blank and get()'s default never fires. That is how the brand name
+            # vanished from the card and the caption ended with "link in bio ()".
+            brand_handle=os.environ.get("BRAND_HANDLE") or "@tripulsedaily",
+            brand_name=os.environ.get("BRAND_NAME") or "TriPulse Daily",
             affiliate_urls=affiliate,
         )
 

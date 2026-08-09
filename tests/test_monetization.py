@@ -141,3 +141,34 @@ def test_assemble_caption_rotates_affiliate_across_dates(sample_brief):
     for c in captions:
         assert len(c) > 0
         assert "@testbrand" in c
+
+class TestCtaLine:
+    """The CTA must not promise things that aren't configured."""
+
+    def test_omits_gear_picks_without_affiliates(self):
+        from triagent.monetization import _cta
+
+        assert "gear picks" not in _cta("@x", has_affiliate=False)
+
+    def test_includes_gear_picks_with_affiliates(self):
+        from triagent.monetization import _cta
+
+        assert "gear picks" in _cta("@x", has_affiliate=True)
+
+    def test_no_empty_brackets_when_handle_missing(self):
+        """An unset BRAND_HANDLE rendered as 'link in bio ()' in production."""
+        from triagent.monetization import _cta
+
+        out = _cta("", has_affiliate=False)
+        assert "()" not in out
+        assert out.endswith("link in bio")
+
+    def test_handle_appended_when_present(self):
+        from triagent.monetization import _cta
+
+        assert _cta("@tri", has_affiliate=False).endswith("(@tri)")
+
+    def test_whitespace_only_handle_treated_as_missing(self):
+        from triagent.monetization import _cta
+
+        assert "()" not in _cta("   ", has_affiliate=False)
