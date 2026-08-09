@@ -334,3 +334,37 @@ class TestWhoami:
         with patch("triagent.publisher.requests.get", return_value=mock_response) as mg:
             p.whoami()
         assert mg.call_args[1]["params"]["fields"] == "id,username"
+
+
+class TestImageTimeoutDiagnostics:
+    """The timeout must say *why*, since 404 and 5xx need opposite fixes."""
+
+    def _resp(self, status):
+        r = MagicMock()
+        r.ok = False
+        r.status_code = status
+        return r
+
+    def test_404_reports_case_sensitivity_hint(self, publisher):
+        with patch("triagent.publisher.requests.head", return_value=self._resp(404)):
+            with pytest.raises(TimeoutError, match="case-sensitive"):
+                publisher.wait_for_image("https://x.example/daily.png", timeout_secs=1)
+
+    def test_503_reports_last_status(self, publisher):
+        with patch("triagent.publisher.requests.head", return_value=self._resp(503)):
+            with pytest.raises(TimeoutError, match="HTTP 503"):
+                publisher.wait_for_image("https://x.example/daily.png", timeout_secs=1)
+
+    def test_connection_error_reports_no_answer(self, publisher):
+        with patch(
+            "triagent.publisher.requests.head",
+            side_effect=requests.ConnectionError("dns"),
+        ):
+            with pytest.raises(TimeoutError, match="never answered"):
+                publisher.wait_for_image("https://x.example/daily.png", timeout_secs=1)
+
+    def test_success_does_not_raise(self, publisher):
+        ok = MagicMock()
+        ok.ok = True
+        with patch("triagent.publisher.requests.head", return_value=ok):
+            publisher.wait_for_image("https://x.example/daily.png", timeout_secs=5)

@@ -115,17 +115,24 @@ class InstagramPublisher:
 
         if r.ok:
             return
+        # Record the status so the timeout can say *why* it never appeared.
+        # A steady 404 means the URL is wrong; a 5xx or connection error means
+        # the host is still warming up. Those need opposite fixes.
+        self._last_image_status = r.status_code
+        log.warning("image URL not ready yet: HTTP %s for %s", r.status_code, image_url)
         raise ImageNotReady(f"image URL returned {r.status_code}")
 
-    def wait_for_image(self, image_url: str, *, timeout_secs: int = 120) -> None:
+    def wait_for_image(self, image_url: str, *, timeout_secs: int = 300) -> None:
         """Poll the image URL until it returns HTTP 200 or the timeout elapses.
 
         This replaces the raw ``sleep 45`` in the GitHub Actions workflow with
         a proper health check so we only proceed once the image is actually
-        servable.
+        servable. The default allows for GitHub Pages CDN propagation, which
+        can exceed two minutes when a path is published for the first time.
         """
         # Use a mutable container so the inner function can update it.
         head_unsupported: list[bool] = [False]
+        self._last_image_status: int | None = None
 
         retrying = retry(
             retry=retry_if_exception_type(
@@ -138,9 +145,22 @@ class InstagramPublisher:
 
         try:
             retrying(self._check_image)(image_url, head_unsupported=head_unsupported)
-        except (ImageNotReady, requests.ConnectionError, requests.Timeout):
+        except (ImageNotReady, requests.ConnectionError, requests.Timeout) as exc:
+            status = getattr(self, "_last_image_status", None)
+            if status == 404:
+                hint = (
+                    "Consistent 404 — PUBLIC_IMAGE_BASE_URL almost certainly points "
+                    "somewhere the file isn't. GitHub Pages paths are case-sensitive: "
+                    "a repo named 'TriAgent' is served at /TriAgent/, not /triagent/. "
+                    "Open the URL in a browser to confirm."
+                )
+            elif status is not None:
+                hint = f"last response was HTTP {status}"
+            else:
+                hint = f"host never answered ({type(exc).__name__}) — check the domain"
             raise TimeoutError(
-                f"image URL {image_url} did not become reachable within {timeout_secs}s"
+                f"image URL {image_url} did not become reachable within "
+                f"{timeout_secs}s. {hint}"
             )
         log.info("image URL is live: %s", image_url)
 
