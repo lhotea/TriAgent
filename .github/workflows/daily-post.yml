@@ -62,10 +62,18 @@ jobs:
           else
             git worktree add --orphan -b gh-pages gh-pages-wt
           fi
-          cp assets/daily.png gh-pages-wt/daily.png
-          cp assets/index.html gh-pages-wt/index.html
-          # Reels only: the mp4 must be publicly fetchable for Meta to pull it.
-          [ -f assets/daily.mp4 ] && cp assets/daily.mp4 gh-pages-wt/daily.mp4 || true
+          # Copy by glob, not by literal name. Assets are published under dated
+          # filenames (daily-2026-08-09.png) to defeat CDN caching, and naming
+          # each file explicitly here means a change in the Python has to be
+          # mirrored in this YAML — which is exactly how run #125 published a
+          # card the publisher then waited 300s for and never found.
+          cp assets/daily*.png gh-pages-wt/
+          cp assets/index.html gh-pages-wt/
+          cp assets/daily*.mp4 gh-pages-wt/ 2>/dev/null || true
+          # Fail here rather than letting the publisher discover it 300s later.
+          ls gh-pages-wt/daily-*.png >/dev/null 2>&1 || {
+            echo "no dated card was copied — publish would 404"; exit 1; }
+          ls -1 gh-pages-wt/
           cd gh-pages-wt
           git config user.email "actions@github.com"
           git config user.name "TriAgent Bot"
