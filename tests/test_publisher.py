@@ -159,7 +159,7 @@ class TestPublish:
             patch.object(publisher, "_post", side_effect=mock_post),
             patch.object(publisher, "_get", side_effect=mock_get),
         ):
-            with pytest.raises(TimeoutError, match="media container never reached"):
+            with pytest.raises(TimeoutError, match="never reached FINISHED"):
                 publisher.publish(
                     image_url="https://example.com/image.png",
                     caption="Test caption",
@@ -431,3 +431,49 @@ class TestRefreshLongLivedToken:
         with patch("triagent.publisher.requests.get", return_value=resp):
             with pytest.raises(requests.HTTPError):
                 publisher.refresh_long_lived_token()
+
+
+class TestPublishReel:
+    """Reels are the only Instagram format that can carry audio."""
+
+    def test_sends_reels_media_type(self, publisher):
+        post = MagicMock(side_effect=[{"id": "c1"}, {"id": "m1"}])
+        get = MagicMock(return_value={"status_code": "FINISHED"})
+        with (
+            patch.object(publisher, "_post", post),
+            patch.object(publisher, "_get", get),
+        ):
+            out = publisher.publish_reel("https://x/v.mp4", "cap")
+        assert out == "m1"
+        assert post.call_args_list[0][1]["media_type"] == "REELS"
+        assert post.call_args_list[0][1]["video_url"] == "https://x/v.mp4"
+
+    def test_passes_cover_url_when_given(self, publisher):
+        post = MagicMock(side_effect=[{"id": "c1"}, {"id": "m1"}])
+        get = MagicMock(return_value={"status_code": "FINISHED"})
+        with (
+            patch.object(publisher, "_post", post),
+            patch.object(publisher, "_get", get),
+        ):
+            publisher.publish_reel("https://x/v.mp4", "cap", cover_url="https://x/c.png")
+        assert post.call_args_list[0][1]["cover_url"] == "https://x/c.png"
+
+    def test_omits_cover_url_when_absent(self, publisher):
+        post = MagicMock(side_effect=[{"id": "c1"}, {"id": "m1"}])
+        get = MagicMock(return_value={"status_code": "FINISHED"})
+        with (
+            patch.object(publisher, "_post", post),
+            patch.object(publisher, "_get", get),
+        ):
+            publisher.publish_reel("https://x/v.mp4", "cap")
+        assert "cover_url" not in post.call_args_list[0][1]
+
+    def test_raises_on_container_error(self, publisher):
+        post = MagicMock(return_value={"id": "c1"})
+        get = MagicMock(return_value={"status_code": "ERROR", "status": "bad codec"})
+        with (
+            patch.object(publisher, "_post", post),
+            patch.object(publisher, "_get", get),
+        ):
+            with pytest.raises(RuntimeError, match="bad codec"):
+                publisher.publish_reel("https://x/v.mp4", "cap")

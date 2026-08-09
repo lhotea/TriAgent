@@ -80,6 +80,11 @@ class Settings:
     affiliate_urls: list[str] = field(default_factory=list)
     feeds: list[str] = field(default_factory=lambda: list(DEFAULT_FEEDS))
     model: str = "claude-opus-4-7"
+    # "image" (default) or "reel". Reels are the only format Instagram lets
+    # carry audio, so music requires post_format="reel".
+    post_format: str = "image"
+    reel_audio: str | None = None
+    reel_seconds: int = 8
     max_headlines: int = 6
     image_path: Path = ASSETS_DIR / "daily.png"
 
@@ -100,6 +105,9 @@ class Settings:
             # empty string for an unset `vars.X`, so the env var exists but is
             # blank and get()'s default never fires. That is how the brand name
             # vanished from the card and the caption ended with "link in bio ()".
+            post_format=(os.environ.get("POST_FORMAT") or "image").lower(),
+            reel_audio=_optional("REEL_AUDIO"),
+            reel_seconds=int(os.environ.get("REEL_SECONDS") or 8),
             brand_handle=os.environ.get("BRAND_HANDLE") or "@tripulsedaily",
             brand_name=os.environ.get("BRAND_NAME") or "TriPulse Daily",
             affiliate_urls=affiliate,

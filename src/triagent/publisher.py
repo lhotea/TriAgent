@@ -218,30 +218,33 @@ class InstagramPublisher:
             r.raise_for_status()
         return r.json()
 
-    def publish(self, image_url: str, caption: str) -> str:
-        """Create a media container, wait for processing, then publish.
+    def _await_container(self, creation_id: str, *, attempts: int, delay: int) -> None:
+        """Block until the container finishes processing, or fail loudly."""
+        for _ in range(attempts):
+            status = self._get(creation_id, fields="status_code,status")
+            code = status.get("status_code")
+            if code == "FINISHED":
+                return
+            if code == "ERROR":
+                # `status` carries the human-readable reason; status_code alone
+                # just says ERROR, which isn't enough to act on.
+                raise RuntimeError(f"container processing failed: {status}")
+            time.sleep(delay)
+        raise TimeoutError(
+            f"container {creation_id} never reached FINISHED after "
+            f"{attempts * delay}s"
+        )
 
-        Returns the published media ID.
-        """
-        log.info("creating media container")
+    def publish(self, image_url: str, caption: str) -> str:
+        """Publish a single image post. Returns the published media ID."""
+        log.info("creating image container")
         create = self._post(
             f"{self.ig_user_id}/media",
             image_url=image_url,
             caption=caption,
         )
         creation_id = create["id"]
-
-        # Poll status up to ~60s — image hosts sometimes take a moment to fetch.
-        for attempt in range(20):
-            status = self._get(creation_id, fields="status_code")
-            code = status.get("status_code")
-            if code == "FINISHED":
-                break
-            if code == "ERROR":
-                raise RuntimeError(f"container processing failed: {status}")
-            time.sleep(3)
-        else:
-            raise TimeoutError("media container never reached FINISHED state")
+        self._await_container(creation_id, attempts=20, delay=3)
 
         log.info("publishing container %s", creation_id)
         publish = self._post(
@@ -249,4 +252,42 @@ class InstagramPublisher:
         )
         media_id = publish["id"]
         log.info("published media_id=%s", media_id)
+        return media_id
+
+    def publish_reel(
+        self,
+        video_url: str,
+        caption: str,
+        *,
+        cover_url: str | None = None,
+        share_to_feed: bool = True,
+    ) -> str:
+        """Publish a Reel. Returns the published media ID.
+
+        Video transcoding takes substantially longer than an image fetch — Meta
+        downloads the file, transcodes it, and only then reports FINISHED — so
+        this polls far longer than publish() does. Giving up early here would
+        abandon a container that was going to succeed.
+        """
+        log.info("creating reel container")
+        params = {
+            "media_type": "REELS",
+            "video_url": video_url,
+            "caption": caption,
+            "share_to_feed": "true" if share_to_feed else "false",
+        }
+        if cover_url:
+            params["cover_url"] = cover_url
+
+        create = self._post(f"{self.ig_user_id}/media", **params)
+        creation_id = create["id"]
+        # Up to ~5 minutes: Meta must fetch and transcode the file.
+        self._await_container(creation_id, attempts=60, delay=5)
+
+        log.info("publishing reel container %s", creation_id)
+        publish = self._post(
+            f"{self.ig_user_id}/media_publish", creation_id=creation_id
+        )
+        media_id = publish["id"]
+        log.info("published reel media_id=%s", media_id)
         return media_id

@@ -37,6 +37,9 @@ jobs:
           AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}
+          POST_FORMAT: ${{ vars.POST_FORMAT || 'image' }}
+          REEL_AUDIO: ${{ vars.REEL_AUDIO }}
+          REEL_SECONDS: ${{ vars.REEL_SECONDS }}
         run: python -m triagent --mode build
 
       - name: Publish card to gh-pages
@@ -52,10 +55,12 @@ jobs:
           fi
           cp assets/daily.png gh-pages-wt/daily.png
           cp assets/index.html gh-pages-wt/index.html
+          # Reels only: the mp4 must be publicly fetchable for Meta to pull it.
+          [ -f assets/daily.mp4 ] && cp assets/daily.mp4 gh-pages-wt/daily.mp4 || true
           cd gh-pages-wt
           git config user.email "actions@github.com"
           git config user.name "TriAgent Bot"
-          git add daily.png index.html
+          git add -A
           git commit -m "card: $(date -u +%F)" || echo "no changes"
           git push origin gh-pages
 
@@ -71,6 +76,7 @@ jobs:
           AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}
+          POST_FORMAT: ${{ vars.POST_FORMAT || 'image' }}
         run: python -m triagent --mode publish
 
       - name: Upload rendered card
@@ -82,4 +88,5 @@ jobs:
             assets/daily.png
             assets/caption.txt
             assets/index.html
+            assets/daily.mp4
           if-no-files-found: ignore

@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
-from .config import Settings
-from .image import render_card
+from .config import ASSETS_DIR, Settings
+from .image import pick_background, render_card, render_reel_frame
 from .monetization import assemble_caption
 from .news import fetch_recent_widening
 from .publisher import InstagramPublisher
 from .review import render_review_page
+from .video import build_reel
 from .summarizer import DailyBrief, Summarizer
 
 log = logging.getLogger(__name__)
+
+# Drop your own licensed photos here; empty means the gradient is used.
+BACKGROUNDS_DIR = ASSETS_DIR / "backgrounds"
 
 
 @dataclass
@@ -23,23 +29,36 @@ class RunResult:
     media_id: str | None  # None in dry-run / build-only mode
 
 
-def _image_url(settings: Settings) -> str:
+def _asset_url(settings: Settings, filename: str) -> str:
     if not settings.public_image_base_url:
         # Build mode can run without this — it's only informational until publish.
-        return f"<unset>/{settings.image_path.name}"
-    return f"{settings.public_image_base_url}/{settings.image_path.name}"
+        return f"<unset>/{filename}"
+    return f"{settings.public_image_base_url}/{filename}"
+
+
+def _image_url(settings: Settings) -> str:
+    return _asset_url(settings, settings.image_path.name)
 
 
 def _do_publish(settings: Settings, image_url: str, caption: str) -> str:
-    """Shared helper: create publisher, wait for image, publish to Instagram."""
+    """Shared helper: create publisher, wait for the asset, publish."""
     assert settings.ig_user_id and settings.ig_access_token  # checked by caller
     publisher = InstagramPublisher(
         ig_user_id=settings.ig_user_id, access_token=settings.ig_access_token
     )
+
+    if settings.post_format == "reel":
+        video_url = _asset_url(settings, "daily.mp4")
+        log.info("waiting for video URL to be reachable: %s", video_url)
+        publisher.wait_for_image(video_url)
+        # Cover frame is the still card, so the feed thumbnail matches the post.
+        return publisher.publish_reel(
+            video_url=video_url, caption=caption, cover_url=image_url
+        )
+
     log.info("waiting for image URL to be reachable: %s", image_url)
     publisher.wait_for_image(image_url)
-    media_id = publisher.publish(image_url=image_url, caption=caption)
-    return media_id
+    return publisher.publish(image_url=image_url, caption=caption)
 
 
 def build(settings: Settings) -> RunResult:
@@ -62,7 +81,33 @@ def build(settings: Settings) -> RunResult:
     summarizer = Summarizer(api_key=settings.anthropic_api_key, model=settings.model)
     brief = summarizer.build_brief(top_items, brand_name=settings.brand_name)
 
-    render_card(brief, brand_name=settings.brand_name, out_path=settings.image_path)
+    seed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    background = pick_background(BACKGROUNDS_DIR, seed)
+    if background:
+        log.info("using background photo %s", background.name)
+
+    render_card(
+        brief,
+        brand_name=settings.brand_name,
+        out_path=settings.image_path,
+        background=background,
+    )
+
+    if settings.post_format == "reel":
+        frame = settings.image_path.with_name("reel_frame.png")
+        render_reel_frame(
+            brief,
+            brand_name=settings.brand_name,
+            out_path=frame,
+            background=background,
+        )
+        audio = Path(settings.reel_audio) if settings.reel_audio else None
+        build_reel(
+            frame,
+            settings.image_path.with_name("daily.mp4"),
+            audio_path=audio,
+            duration=settings.reel_seconds,
+        )
 
     caption = assemble_caption(
         brief,
@@ -103,6 +148,11 @@ def publish_from_build(settings: Settings) -> RunResult:
         raise RuntimeError(
             f"no rendered card at {settings.image_path}; run build step first"
         )
+
+    if settings.post_format == "reel":
+        mp4 = settings.image_path.with_name("daily.mp4")
+        if not mp4.exists():
+            raise RuntimeError(f"no rendered reel at {mp4}; run build step first")
 
     settings.require_publish_config()
 
