@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,6 +29,30 @@ DEFAULT_FEEDS = [
     "https://www.tri247.com/feed",
     "https://www.slowtwitch.com/feed",
 ]
+
+
+_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
+
+
+def normalize_feed_url(url: str) -> str:
+    """Add https:// when a feed is given as a bare domain.
+
+    Feed lists get pasted from directories and browser address bars, which
+    routinely drop the scheme. requests rejects those outright ("No scheme
+    supplied"), so a whole list can fail for a purely cosmetic reason.
+    """
+    url = url.strip(" \t\r\n,")
+    if not url:
+        return ""
+    if _SCHEME_RE.match(url):
+        return url
+    return f"https://{url.lstrip('/')}"
+
+
+def parse_feed_list(raw: str) -> list[str]:
+    """Split a comma- or whitespace-separated feed list and normalize each entry."""
+    parts = re.split(r"[,\s]+", raw.strip())
+    return [u for u in (normalize_feed_url(p) for p in parts) if u]
 
 
 def _required(name: str) -> str:
@@ -64,10 +89,7 @@ class Settings:
         affiliate = [u.strip() for u in affiliate_raw.split(",") if u.strip()]
         base = _optional("PUBLIC_IMAGE_BASE_URL")
         # Feeds rot faster than code ships — allow overriding without a release.
-        feeds_raw = os.environ.get("FEEDS", "").strip()
-        feeds = [f.strip() for f in feeds_raw.split(",") if f.strip()] or list(
-            DEFAULT_FEEDS
-        )
+        feeds = parse_feed_list(os.environ.get("FEEDS", "")) or list(DEFAULT_FEEDS)
         return cls(
             feeds=feeds,
             anthropic_api_key=_required("ANTHROPIC_API_KEY"),

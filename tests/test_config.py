@@ -168,3 +168,69 @@ class TestSettingsFrozen:
         )
         with pytest.raises(Exception):  # type: ignore[misc]  # FrozenInstanceError
             s.ig_user_id = "456"  # pyright: ignore[reportAttributeAccessIssue]
+
+class TestFeedUrlNormalization:
+    """Feed lists get pasted without schemes; requests rejects those outright."""
+
+    def test_adds_https_to_bare_domain(self):
+        from triagent.config import normalize_feed_url
+
+        assert normalize_feed_url("dcrainmaker.com/feed") == "https://dcrainmaker.com/feed"
+
+    def test_preserves_existing_https(self):
+        from triagent.config import normalize_feed_url
+
+        url = "https://www.triathlete.com/feed/"
+        assert normalize_feed_url(url) == url
+
+    def test_preserves_existing_http(self):
+        from triagent.config import normalize_feed_url
+
+        assert normalize_feed_url("http://example.com/feed") == "http://example.com/feed"
+
+    def test_strips_whitespace_and_stray_commas(self):
+        from triagent.config import normalize_feed_url
+
+        assert normalize_feed_url("  example.com/feed , ") == "https://example.com/feed"
+
+    def test_empty_string_stays_empty(self):
+        from triagent.config import normalize_feed_url
+
+        assert normalize_feed_url("   ") == ""
+
+    def test_parse_list_splits_on_commas(self):
+        from triagent.config import parse_feed_list
+
+        out = parse_feed_list("a.com/feed,b.com/feed")
+        assert out == ["https://a.com/feed", "https://b.com/feed"]
+
+    def test_parse_list_splits_on_newlines(self):
+        """Pasting a multi-line list from a feed directory must work too."""
+        from triagent.config import parse_feed_list
+
+        out = parse_feed_list("a.com/feed\nb.com/feed\n")
+        assert out == ["https://a.com/feed", "https://b.com/feed"]
+
+    def test_parse_list_drops_empties(self):
+        from triagent.config import parse_feed_list
+
+        assert parse_feed_list("a.com/feed,,  ,b.com/feed") == [
+            "https://a.com/feed",
+            "https://b.com/feed",
+        ]
+
+    def test_parse_list_empty_input(self):
+        from triagent.config import parse_feed_list
+
+        assert parse_feed_list("") == []
+
+    def test_settings_normalizes_feeds_env(self, monkeypatch):
+        from triagent.config import Settings
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.setenv("FEEDS", "dcrainmaker.com/feed, 220triathlon.com/feed/atom")
+        s = Settings.from_env()
+        assert s.feeds == [
+            "https://dcrainmaker.com/feed",
+            "https://220triathlon.com/feed/atom",
+        ]
