@@ -1,0 +1,83 @@
+name: collect-insights
+
+# Runs a few hours after the daily post so the newest one has some numbers,
+# and re-polls recent posts because insights keep moving for days. Without
+# this, every change to the hook or format is a guess.
+
+on:
+  schedule:
+    - cron: "0 18 * * *"  # 18:00 UTC — 5h after the 13:00 post
+  workflow_dispatch:
+
+permissions:
+  contents: write  # to publish the CSV to gh-pages
+
+jobs:
+  insights:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install TriAgent
+        run: pip install -e .
+
+      # The CSV is the accumulated history. Pull the published copy first or
+      # each run would start from empty and overwrite everything collected so
+      # far — the merge is an upsert, but only over rows it can see.
+      - name: Fetch existing history
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          git fetch origin gh-pages || true
+          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            git show origin/gh-pages:insights.csv > assets/insights.csv 2>/dev/null \
+              || echo "no history yet — starting a new file"
+          fi
+
+      - name: Collect insights
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_API_MODE: ${{ vars.IG_API_MODE || 'instagram_login' }}
+        run: python -m triagent --mode insights | tee summary.txt
+
+      - name: Publish CSV to gh-pages
+        run: |
+          set -euo pipefail
+          test -f assets/insights.csv || { echo "nothing collected"; exit 1; }
+          git fetch origin gh-pages || true
+          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            git worktree add -B gh-pages gh-pages-wt origin/gh-pages
+          else
+            git worktree add --orphan -b gh-pages gh-pages-wt
+          fi
+          cp assets/insights.csv gh-pages-wt/insights.csv
+          cd gh-pages-wt
+          git config user.email "actions@github.com"
+          git config user.name "TriAgent Bot"
+          git add insights.csv
+          git commit -m "insights: $(date -u +%F)" || echo "no changes"
+          git push origin gh-pages
+
+      - name: Show ranking in the run summary
+        if: always()
+        run: |
+          {
+            echo '## Post performance'
+            echo '```'
+            cat summary.txt 2>/dev/null || echo 'no summary produced'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: insights
+          path: assets/insights.csv
+          if-no-files-found: ignore

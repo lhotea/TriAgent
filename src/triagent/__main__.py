@@ -13,7 +13,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="triagent")
     parser.add_argument(
         "--mode",
-        choices=["full", "build", "publish", "whoami", "feedcheck", "refresh"],
+        choices=[
+            "full", "build", "publish", "whoami",
+            "feedcheck", "refresh", "insights",
+        ],
         default="full",
         help=(
             "full: build + publish in one process. "
@@ -25,6 +28,15 @@ def main() -> int:
         "--dry-run",
         action="store_true",
         help="(full mode only) build the post but skip publishing to Instagram.",
+    )
+    parser.add_argument(
+        "--insights-limit",
+        type=int,
+        default=25,
+        help=(
+            "(insights mode) how many recent posts to re-poll. Metrics keep "
+            "moving for days, so recent posts are refreshed, not just added."
+        ),
     )
     parser.add_argument(
         "--log-level",
@@ -43,6 +55,26 @@ def main() -> int:
     except RuntimeError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.mode == "insights":
+        # Needs only the account credentials — no Claude, no image host.
+        if not (settings.ig_user_id and settings.ig_access_token):
+            print(
+                "config error: IG_USER_ID and IG_ACCESS_TOKEN are required",
+                file=sys.stderr,
+            )
+            return 2
+        from .insights import collect_rows, merge_rows, summarise, write_csv
+        from .publisher import InstagramPublisher
+
+        client = InstagramPublisher(
+            ig_user_id=settings.ig_user_id, access_token=settings.ig_access_token
+        )
+        csv_path = settings.image_path.with_name("insights.csv")
+        merged = merge_rows(csv_path, collect_rows(client, limit=args.insights_limit))
+        write_csv(csv_path, merged)
+        print(summarise(merged))
+        return 0
 
     if args.mode == "refresh":
         # stdout carries ONLY the new token so a workflow can capture it with

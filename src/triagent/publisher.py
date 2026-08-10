@@ -137,6 +137,48 @@ class InstagramPublisher:
             raise RuntimeError(f"refresh returned no access_token: {data}")
         return data
 
+    # Metric availability varies by media type, by account, and by when the
+    # media was created — Meta retired `impressions` and `plays` for newer
+    # posts. Asking for an unsupported metric fails the whole call, so the
+    # request degrades: preferred set first, then a core set that every media
+    # type supports.
+    CORE_METRICS = ("reach", "likes", "comments", "saved", "shares")
+    EXTRA_METRICS = ("views", "total_interactions", "profile_visits", "follows")
+
+    def list_media(self, limit: int = 25) -> list[dict]:
+        """Return recently published media, newest first."""
+        data = self._get(
+            f"{self.ig_user_id}/media",
+            fields="id,media_type,permalink,timestamp,caption",
+            limit=limit,
+        )
+        return data.get("data", [])
+
+    def media_insights(self, media_id: str) -> dict:
+        """Return metrics for one post, or {} if none are available.
+
+        Never raises. Insight collection is observability, and losing a day of
+        numbers must not be able to take down anything else.
+        """
+        for metrics in (
+            self.CORE_METRICS + self.EXTRA_METRICS,
+            self.CORE_METRICS,
+        ):
+            try:
+                data = self._get(f"{media_id}/insights", metric=",".join(metrics))
+            except Exception as exc:
+                log.debug("insights for %s failed with %d metrics: %s",
+                          media_id, len(metrics), exc)
+                continue
+            out: dict = {}
+            for row in data.get("data", []):
+                values = row.get("values") or [{}]
+                out[row["name"]] = values[0].get("value")
+            if out:
+                return out
+        log.warning("no insights available for %s (too new, or unsupported)", media_id)
+        return {}
+
     def _check_image(self, image_url: str, *, head_unsupported: list[bool]) -> None:
         """Check whether the image URL is reachable; raise ImageNotReady if not."""
         # Try HEAD first (cheap), fall back to GET if the server doesn't support HEAD.

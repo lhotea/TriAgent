@@ -300,6 +300,35 @@ Run #121 published successfully to Instagram (`media_id=18082672631692674`).
 
 ---
 
+### Stage 8 — Measurement (`insights.py`)
+
+A daily post produces one data point a day, so without recorded numbers every
+change to the hook, format or question stays a hunch for months. `--mode
+insights` pulls per-post metrics and upserts them into a CSV published to
+gh-pages.
+
+Column choices follow from what actually drives distribution:
+
+- **saves and shares** weigh far more than likes, and separate a post people
+  keep from one they scroll past
+- **engagement rate** (interactions ÷ reach) is the comparable number; raw
+  counts mostly track how many followers existed that week
+- **follows** attributes new followers to the post that earned them
+- **hook** is the first caption line, so a row reads as "this sentence produced
+  these numbers"
+
+Rows are upserted by `media_id`, not appended: insights keep moving for days
+after publishing, so re-polling has to correct a row rather than duplicate it.
+The workflow pulls the published CSV before collecting, since the merge can
+only upsert over rows it can see.
+
+Metric availability varies by media type, account and creation date — Meta
+retired `impressions` and `plays` for newer posts — and one unsupported metric
+fails the whole call, so the request degrades to a core set. Nothing here
+raises: losing a day of numbers must not affect posting.
+
+---
+
 ## 5. Costs
 
 - **Claude**: ~4k input + ~1k output per run, roughly $0.05/day at Opus pricing.

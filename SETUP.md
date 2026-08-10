@@ -246,6 +246,33 @@ shape is used, so surrounding artwork is ignored.
 
 ---
 
+## 7b. Performance tracking
+
+Runs automatically — no setup beyond the Instagram credentials you already
+have. The `collect-insights` workflow runs daily at 18:00 UTC (five hours after
+the post), pulls per-post metrics, and publishes them to:
+
+```
+https://<your-username>.github.io/<RepoName>/insights.csv
+```
+
+Recent posts are re-polled every run because insights keep moving for a few
+days; a post checked an hour after publishing is not final.
+
+Read the **engagement_rate** column rather than raw likes — it is interactions
+divided by reach, so it stays comparable as the account grows. The **hook**
+column is the first caption line, so you can see which openings earned saves
+and which died. Each run also prints a ranking to the workflow summary.
+
+Give it two weeks before drawing conclusions. Below roughly ten posts the
+numbers are noise.
+
+> The CSV lands on a public branch of a public repo. Post performance is not
+> especially sensitive, but if you'd rather it weren't public, drop the
+> "Publish CSV to gh-pages" step and read the run artifact instead.
+
+---
+
 ## 8. Pictures — strongly recommended
 
 The card design puts a photo across the top ~58%. Without one it falls back to a
@@ -331,6 +358,7 @@ python -m triagent --mode full --dry-run
 | 8 | `IMAGE_GEN_API_KEY` | Secret | optional, paid |
 | 8 | `assets/backgrounds/*` | Repo | optional fallback |
 | 9 | `AFFILIATE_URLS` | Secret | optional |
+| 7b | Performance tracking | automatic | no setup needed |
 
 ---
 

@@ -513,3 +513,34 @@ class TestPublishCarousel:
         with patch.object(publisher, "_post", post), patch.object(publisher, "_get", get):
             with pytest.raises(RuntimeError, match="bad image"):
                 publisher.publish_carousel(["u1", "u2"], "cap")
+
+
+class TestInsightsFetch:
+    """Metric availability varies by media type and account age; an
+    unsupported metric fails the whole call, so the request must degrade."""
+
+    def _resp(self, names):
+        return {"data": [{"name": n, "values": [{"value": 7}]} for n in names]}
+
+    def test_returns_metrics_on_first_attempt(self, publisher):
+        with patch.object(publisher, "_get", return_value=self._resp(["reach"])):
+            assert publisher.media_insights("m1")["reach"] == 7
+
+    def test_falls_back_to_core_metrics(self, publisher):
+        get = MagicMock(side_effect=[Exception("unsupported"), self._resp(["reach"])])
+        with patch.object(publisher, "_get", get):
+            assert publisher.media_insights("m1") == {"reach": 7}
+        assert get.call_count == 2
+
+    def test_returns_empty_rather_than_raising(self, publisher):
+        """Losing a day of numbers must not break anything else."""
+        with patch.object(publisher, "_get", side_effect=Exception("nope")):
+            assert publisher.media_insights("m1") == {}
+
+    def test_list_media_returns_data_array(self, publisher):
+        with patch.object(publisher, "_get", return_value={"data": [{"id": "1"}]}):
+            assert publisher.list_media() == [{"id": "1"}]
+
+    def test_list_media_handles_empty_account(self, publisher):
+        with patch.object(publisher, "_get", return_value={}):
+            assert publisher.list_media() == []
