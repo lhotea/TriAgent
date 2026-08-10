@@ -197,6 +197,12 @@ Without this, publishing dies ~60 days after setup.
 4. Store as secret **`GH_PAT`**.
 
 The weekly `refresh-instagram-token` workflow then rotates the token unattended.
+
+> ⚠️ Meta will not refresh a token less than **24 hours old**. A refresh run
+> shortly after first setup fails for that reason alone — it is not a `GH_PAT`
+> problem. Tell the two apart by where the job stops: a failure in the refresh
+> call is Meta's age limit; a failure at `gh secret set` is the PAT.
+
 `GITHUB_TOKEN` cannot write secrets, which is why a PAT is required; without it
 the job fails loudly rather than appearing to work.
 
@@ -330,6 +336,7 @@ python -m triagent --mode full --dry-run
 | `me/accounts` returns `data: []` | No Facebook Page — irrelevant on the Instagram Login path |
 | Caption ends with `link in bio ()` | `BRAND_HANDLE` unset |
 | `ffmpeg is required` | `POST_FORMAT=reel` without ffmpeg — CI has it, local may not |
+| Refresh fails: token "too new" / `OAuthException` | Meta requires the token to be **24h old** before it can be refreshed. Not a `GH_PAT` problem — wait and re-run. |
 | Card has no photo, just a headline | No picture source configured — see §8 |
 | Posted image is not the newest one | Fixed by dated filenames; older posts used a cached stable URL |
 | "Link in bio" goes nowhere | No link set on the Instagram profile — see §5b |

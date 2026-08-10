@@ -124,6 +124,9 @@ def build(settings: Settings) -> RunResult:
     without regenerating (which would produce a different caption than the
     one already baked into the rendered image).
     """
+    settings.require_build_config()
+    assert settings.anthropic_api_key  # checked immediately above
+
     items = fetch_recent_widening(settings.feeds, per_feed_limit=10)
     if not items:
         raise RuntimeError(

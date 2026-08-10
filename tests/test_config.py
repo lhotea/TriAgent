@@ -12,10 +12,16 @@ from triagent.config import Settings
 class TestSettingsFromEnv:
     """Tests for Settings.from_env()."""
 
-    def test_requires_anthropic_key(self, env_no_env_file):
-        """from_env() raises when ANTHROPIC_API_KEY is missing."""
-        with pytest.raises(RuntimeError, match="Missing required env var: ANTHROPIC_API_KEY"):
-            Settings.from_env()
+    def test_anthropic_key_required_at_build_not_at_load(self, env_no_env_file):
+        """from_env() must load without it; only build paths demand it.
+
+        Changed deliberately: the token-refresh workflow calls from_env() but
+        never touches Claude, and a global requirement broke it.
+        """
+        s = Settings.from_env()
+        assert s.anthropic_api_key is None
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+            s.require_build_config()
 
     def test_accepts_anthropic_key(self, env_no_env_file, monkeypatch):
         """from_env() succeeds with only ANTHROPIC_API_KEY."""
@@ -234,3 +240,44 @@ class TestFeedUrlNormalization:
             "https://dcrainmaker.com/feed",
             "https://220triathlon.com/feed/atom",
         ]
+
+
+class TestPerModeConfigRequirements:
+    """Config must be validated where it's used, not globally.
+
+    The scheduled token refresh failed with "Missing required env var:
+    ANTHROPIC_API_KEY" — a key that path never uses. Settings.from_env() must
+    load for every mode; each mode asserts only what it needs.
+    """
+
+    def test_from_env_works_without_anthropic_key(self, monkeypatch):
+        from triagent.config import Settings
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("IG_ACCESS_TOKEN", "tok")
+        s = Settings.from_env()
+        assert s.anthropic_api_key is None
+        assert s.ig_access_token == "tok"
+
+    def test_require_build_config_raises_without_key(self, monkeypatch):
+        from triagent.config import Settings
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+            Settings.from_env().require_build_config()
+
+    def test_require_build_config_passes_with_key(self, monkeypatch):
+        from triagent.config import Settings
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        Settings.from_env().require_build_config()  # must not raise
+
+    def test_publish_config_independent_of_anthropic_key(self, monkeypatch):
+        """Publishing needs no Claude key; refreshing needs neither."""
+        from triagent.config import Settings
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("IG_USER_ID", "1")
+        monkeypatch.setenv("IG_ACCESS_TOKEN", "t")
+        monkeypatch.setenv("PUBLIC_IMAGE_BASE_URL", "https://e.com")
+        Settings.from_env().require_publish_config()  # must not raise

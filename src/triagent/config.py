@@ -69,7 +69,10 @@ def _optional(name: str) -> str | None:
 
 @dataclass(frozen=True)
 class Settings:
-    anthropic_api_key: str
+    # Optional for the same reason the publish-side keys are: modes that don't
+    # call Claude (refresh, whoami, feedcheck) must not be blocked by a key they
+    # never use. Validated at point of use via require_build_config().
+    anthropic_api_key: str | None
     # Publish-side — only needed when actually posting to Instagram. Build mode
     # must work without these so a scheduled run doesn't hard-fail during rendering.
     ig_user_id: str | None
@@ -101,7 +104,7 @@ class Settings:
         feeds = parse_feed_list(os.environ.get("FEEDS", "")) or list(DEFAULT_FEEDS)
         return cls(
             feeds=feeds,
-            anthropic_api_key=_required("ANTHROPIC_API_KEY"),
+            anthropic_api_key=_optional("ANTHROPIC_API_KEY"),
             ig_user_id=_optional("IG_USER_ID"),
             ig_access_token=_optional("IG_ACCESS_TOKEN"),
             public_image_base_url=base.rstrip("/") if base else None,
@@ -118,6 +121,11 @@ class Settings:
             brand_name=os.environ.get("BRAND_NAME") or "TriPulse Daily",
             affiliate_urls=affiliate,
         )
+
+    def require_build_config(self) -> None:
+        """Assert what building a post needs. Only build paths call this."""
+        if not self.anthropic_api_key:
+            raise RuntimeError("Missing required env var: ANTHROPIC_API_KEY")
 
     def require_publish_config(self) -> None:
         missing = [
