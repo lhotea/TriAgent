@@ -69,6 +69,11 @@ Fetches RSS feeds and returns recent items, newest first, deduplicated by URL.
   to a livelier aggregator story sitting higher in the list.
 - **Per-feed isolation.** A feed that 404s, times out, or fails DNS is logged
   and skipped. The run continues on whatever is left.
+- **Entity decoding.** Feeds deliver typographic punctuation as numeric
+  entities ("I&#8217;m"). Decoding happens before tag stripping, so
+  double-encoded markup is revealed and removed rather than surviving as
+  literal text. Leaving entities encoded leaked into everything downstream —
+  the public page, the rendered card, and the model's own prompt.
 - **Control-character stripping.** Feed content is untrusted input that is about
   to be placed in a model prompt.
 
@@ -206,7 +211,11 @@ the model picks the lead story by engagement — so the story the headline was
 about could be missing from its own list. Each headline now carries the
 `source_url` it came from, validated against the fetched items.
 
-The review page is also the **link-in-bio destination**. Instagram strips URLs
+The review page is the **link-in-bio destination**, so it is public and shows
+only the card and the day's stories. It previously also displayed the caption,
+which made sense while it doubled as an operator page for posting by hand; a
+reader arriving from the post has no use for that post's raw caption. The
+caption is still written to `caption.txt` and uploaded with the artifacts. Instagram strips URLs
 from captions, so the bio link is the only clickable path off a post — it has to
 be set manually on the profile, which the API cannot do.
 

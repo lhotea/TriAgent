@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import html as html_mod
 import logging
 import re
 from dataclasses import dataclass
@@ -26,8 +27,21 @@ _WS_RE = re.compile(r"\s+")
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
-def _clean(html: str) -> str:
-    text = _WS_RE.sub(" ", _TAG_RE.sub(" ", html or ""))
+def _clean(raw: str) -> str:
+    """Turn a feed's title/summary HTML into plain text.
+
+    Entities must be decoded, not just tags stripped. Feeds routinely deliver
+    typographic punctuation as numeric entities — "I&#8217;m" — and leaving
+    them encoded leaks into everything downstream: the review page shows the
+    raw entity (its own escaping turns the & into &amp;), the rendered card
+    prints it, and the model sees it in its prompt.
+
+    Unescaping happens first so double-encoded markup (&lt;b&gt;) is revealed
+    and then stripped by the tag pass, rather than surviving as literal text.
+    The parameter is `raw` rather than `html` so it cannot shadow the module.
+    """
+    text = html_mod.unescape(raw or "")
+    text = _WS_RE.sub(" ", _TAG_RE.sub(" ", text))
     # Strip control characters that could carry prompt-injection payloads.
     return _CTRL_RE.sub("", text).strip()
 
@@ -153,7 +167,8 @@ def fetch_recent(
             log.warning("feed fetch failed for %s: %s", feed_url, exc)
             continue
 
-        source = parsed.feed.get("title") or feed_url
+        # Feed titles carry entities too ("220 Triathlon &amp; Multisport").
+        source = _clean(parsed.feed.get("title", "")) or feed_url
         for entry in parsed.entries[:per_feed_limit]:
             url = entry.get("link")
             if not url or url in seen_urls:

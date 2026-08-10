@@ -428,3 +428,44 @@ class TestGoverningBodyPriority:
         items = [_WT(f"https://a.com/{i}", "A") for i in range(5)]
         items.append(_WT("https://triathlon.org/x", "F"))
         assert len(prioritize(items)) == 6
+
+
+class TestEntityDecoding:
+    """Feeds deliver punctuation as numeric entities; leaving them encoded
+    leaked "I&#8217;m" onto the public page, the card and the model prompt."""
+
+    def test_decodes_numeric_entities(self):
+        from triagent.news import _clean
+
+        assert _clean("I&#8217;m a coach") == "I’m a coach"
+
+    def test_decodes_named_entities(self):
+        from triagent.news import _clean
+
+        assert _clean("Bruce &amp; Sons") == "Bruce & Sons"
+
+    def test_decodes_en_dash(self):
+        from triagent.news import _clean
+
+        assert "–" in _clean("swim &#8211; bike")
+
+    def test_strips_double_encoded_markup(self):
+        """Unescaping must happen before tag stripping, or markup survives."""
+        from triagent.news import _clean
+
+        assert _clean("&lt;b&gt;bold&lt;/b&gt; text") == "bold text"
+
+    def test_still_strips_real_tags(self):
+        from triagent.news import _clean
+
+        assert _clean("<p>hello <em>there</em></p>") == "hello there"
+
+    def test_still_strips_control_characters(self):
+        from triagent.news import _clean
+
+        assert _clean("a\x00b\x07c") == "abc"
+
+    def test_nbsp_becomes_ordinary_space(self):
+        from triagent.news import _clean
+
+        assert _clean("a&nbsp;b") == "a b"

@@ -231,7 +231,6 @@ def build(settings: Settings) -> RunResult:
     # and the day's stories as real links. Ordered by the model's ranking so
     # the lead story — the one the headline is about — is always first.
     render_review_page(
-        caption,
         brand_name=settings.brand_name,
         out_path=settings.image_path.with_name("index.html"),
         stories=_stories_for_page(brief, top_items),

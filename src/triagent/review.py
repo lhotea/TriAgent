@@ -40,20 +40,6 @@ _PAGE = """<!doctype html>
   h1 {{ font-size: 1.25rem; margin: 0 0 4px; }}
   .meta {{ opacity: .65; font-size: .875rem; margin-bottom: 24px; }}
   img {{ width: 100%; height: auto; border-radius: 12px; display: block; }}
-  .bar {{ display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }}
-  button, a.btn {{
-    font: inherit; padding: 10px 16px; border-radius: 8px; cursor: pointer;
-    border: 1px solid currentColor; background: transparent; color: inherit;
-    text-decoration: none; display: inline-block;
-  }}
-  button:active {{ opacity: .6; }}
-  pre {{
-    white-space: pre-wrap; word-wrap: break-word; padding: 16px;
-    border: 1px solid rgba(128,128,128,.35); border-radius: 8px;
-    font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
-  }}
-  .ok {{ opacity: 0; transition: opacity .2s; font-size: .875rem; align-self: center; }}
-  .ok.show {{ opacity: .8; }}
   h2 {{ font-size: 1rem; text-transform: uppercase; letter-spacing: .06em;
         opacity: .6; margin: 32px 0 12px; }}
   ol.stories {{ padding-left: 0; list-style: none; margin: 0; }}
@@ -62,8 +48,6 @@ _PAGE = """<!doctype html>
   ol.stories a:hover {{ text-decoration: underline; }}
   .src {{ display: block; font-size: .8rem; opacity: .55; margin-top: 4px;
           text-transform: uppercase; letter-spacing: .04em; }}
-  details {{ margin-top: 32px; }}
-  summary {{ cursor: pointer; opacity: .7; }}
 </style>
 </head>
 <body>
@@ -76,45 +60,29 @@ _PAGE = """<!doctype html>
 <ol class="stories">
 {stories}
 </ol>
-
-<details>
-  <summary>Caption (for posting)</summary>
-  <div class="bar">
-    <button id="copy">Copy caption</button>
-    <a class="btn" href="{image_name}" download>Download image</a>
-    <span class="ok" id="ok">copied</span>
-  </div>
-  <pre id="caption">{caption}</pre>
-</details>
-
-<script>
-document.getElementById('copy').addEventListener('click', async () => {{
-  await navigator.clipboard.writeText(document.getElementById('caption').textContent);
-  const ok = document.getElementById('ok');
-  ok.classList.add('show');
-  setTimeout(() => ok.classList.remove('show'), 1500);
-}});
-</script>
 </body>
 </html>
 """
 
 
 def render_review_page(
-    caption: str,
     brand_name: str,
     out_path: Path,
     stories: Sequence[Story] = (),
     image_name: str = "daily.png",
 ) -> Path:
-    """Write a self-contained review page next to the rendered card.
+    """Write the public link-in-bio page next to the rendered card.
 
-    The page references ``daily.png`` relatively, so it works anywhere the two
-    files sit side by side — including the gh-pages branch.
+    The page references the card relatively, so it works anywhere the two files
+    sit side by side — including the gh-pages branch.
 
     ``stories`` become real links to the source articles. The post's CTA sends
-    people here for "full stories", so the page has to actually contain them;
-    without the links it's a dead end and the CTA is a lie.
+    people here for more news, so the page has to actually contain it.
+
+    The caption is deliberately absent. It was shown here while this doubled as
+    an operator page for posting by hand, but the bio link makes it public, and
+    a reader has no use for the raw caption of the post they just came from. It
+    is still written to caption.txt and uploaded with the run artifacts.
     """
     items = "\n".join(
         f'  <li><a href="{html.escape(s.url, quote=True)}" target="_blank" '
@@ -126,7 +94,6 @@ def render_review_page(
     page = _PAGE.format(
         brand=html.escape(brand_name),
         date=dt.datetime.now(dt.timezone.utc).strftime("%A, %d %B %Y"),
-        caption=html.escape(caption),
         stories=items,
         image_name=html.escape(image_name, quote=True),
     )
