@@ -31,6 +31,8 @@ FIELDS = [
     "published",
     "collected",
     "media_type",
+    "published_hour_utc",
+    "weekday",
     "permalink",
     "hook",
     "reach",
@@ -44,6 +46,24 @@ FIELDS = [
     "profile_visits",
     "engagement_rate",
 ]
+
+
+def _published_parts(timestamp: str | None) -> tuple[str, str]:
+    """Hour (UTC) and weekday from an API timestamp, or blanks.
+
+    Recorded because a fixed posting time cannot be evaluated from its own
+    data: every post shares the hour, so nothing distinguishes a good slot from
+    a bad one. Capturing it now means that if the schedule is ever rotated
+    across candidate hours, the history is already there to compare.
+    """
+    if not timestamp:
+        return "", ""
+    try:
+        when = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return "", ""
+    when = when.astimezone(dt.timezone.utc)
+    return f"{when.hour:02d}", when.strftime("%a")
 
 
 def _hook_of(caption: str | None) -> str:
@@ -78,9 +98,12 @@ def collect_rows(publisher, limit: int = 25) -> list[dict]:
 
     for media in publisher.list_media(limit=limit):
         metrics = publisher.media_insights(media["id"])
+        hour, weekday = _published_parts(media.get("timestamp"))
         row = {
             "media_id": media["id"],
             "published": media.get("timestamp", ""),
+            "published_hour_utc": hour,
+            "weekday": weekday,
             "collected": now,
             "media_type": media.get("media_type", ""),
             "permalink": media.get("permalink", ""),

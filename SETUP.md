@@ -249,8 +249,8 @@ shape is used, so surrounding artwork is ignored.
 ## 7b. Performance tracking
 
 Runs automatically — no setup beyond the Instagram credentials you already
-have. The `collect-insights` workflow runs daily at 18:00 UTC (five hours after
-the post), pulls per-post metrics, and publishes them to:
+have. The `collect-insights` workflow runs daily at 09:00 UTC (the morning after the
+17:00 post, giving it overnight to accumulate), pulls per-post metrics, and publishes them to:
 
 ```
 https://<your-username>.github.io/<RepoName>/insights.csv
@@ -325,7 +325,21 @@ caption never promises what isn't configured.
 
 Actions → **daily-post** → **Run workflow**. Leave `dry_run` unchecked to post.
 
-The schedule is 13:00 UTC daily.
+The schedule is **17:00 UTC** daily (19:00 CEST / 18:00 BST / 13:00 EDT).
+
+There is no universal best time — the honest answer is whenever *your*
+followers are online, and only this account's own data can say. 17:00 UTC is a
+reasoned default for a European-leaning triathlon audience: evening, after the
+session. It replaces 13:00 UTC, which landed mid-afternoon CEST.
+
+To change it, edit the `cron` line in `.github/workflows/daily-post.yml`.
+GitHub cron is always UTC, so convert from local time first, and remember that
+UK/EU offsets shift twice a year.
+
+> A fixed time cannot be evaluated from its own data — every post shares it, so
+> nothing distinguishes a good hour from a bad one. The insights CSV now records
+> `published_hour_utc` and `weekday`, so rotating the schedule across two or
+> three candidate hours would let the numbers settle it.
 
 ### Local
 

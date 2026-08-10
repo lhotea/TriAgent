@@ -316,6 +316,10 @@ Column choices follow from what actually drives distribution:
 - **follows** attributes new followers to the post that earned them
 - **hook** is the first caption line, so a row reads as "this sentence produced
   these numbers"
+- **published_hour_utc / weekday** exist because a fixed posting time cannot be
+  evaluated from its own data: every post shares the hour, so nothing separates
+  a good slot from a bad one. Recording it means a future rotation across
+  candidate hours has history to compare against
 
 Rows are upserted by `media_id`, not appended: insights keep moving for days
 after publishing, so re-polling has to correct a row rather than duplicate it.

@@ -2,8 +2,23 @@ name: daily-post
 
 on:
   schedule:
-    # 13:00 UTC = 8am ET / 5am PT — early-morning feed drop before commute.
-    - cron: "0 13 * * *"
+    # 17:00 UTC. There is no universal "best time" — the honest answer is
+    # whenever this account's followers are online, which only its own data can
+    # say. This is the best available guess until the insights CSV has enough
+    # rows to settle it:
+    #
+    #   19:00 CEST — European evening, after the session, phone in hand
+    #   18:00 BST  — same, UK
+    #   13:00 EDT  — US east-coast lunch break
+    #
+    # It replaces 13:00 UTC, which landed at 15:00 CEST: mid-afternoon, the
+    # deadest part of a European weekday.
+    #
+    # A fixed time cannot be evaluated from its own data — every post shares it,
+    # so nothing distinguishes a good hour from a bad one. The CSV now records
+    # published_hour_utc and weekday, so rotating this across a few candidate
+    # hours would let the numbers name the winner.
+    - cron: "0 17 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

@@ -1,12 +1,14 @@
 name: collect-insights
 
-# Runs a few hours after the daily post so the newest one has some numbers,
-# and re-polls recent posts because insights keep moving for days. Without
-# this, every change to the hook or format is a guess.
+# Runs the morning after the daily post, so the newest one has had overnight
+# to accumulate numbers, and re-polls recent posts because insights keep moving
+# for days. Without this, every change to the hook or format is a guess.
 
 on:
   schedule:
-    - cron: "0 18 * * *"  # 18:00 UTC — 5h after the 13:00 post
+    # 09:00 UTC — 16h after the 17:00 post. Reporting sooner mostly measures
+    # how fast the first few followers happened to open the app.
+    - cron: "0 9 * * *"
   workflow_dispatch:
 
 permissions:

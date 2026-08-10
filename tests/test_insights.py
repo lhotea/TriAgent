@@ -140,3 +140,45 @@ class TestSummarise:
             {"hook": "punchy", "engagement_rate": "9.0", "reach": 100, "saved": 20},
         ]
         assert summarise(rows).index("punchy") < summarise(rows).index("big reach")
+
+
+class TestPublishedParts:
+    """Hour and weekday are recorded so posting time is analysable at all —
+    a fixed schedule cannot be evaluated from its own data."""
+
+    def test_parses_api_timestamp_format(self):
+        from triagent.insights import _published_parts
+
+        assert _published_parts("2026-08-10T17:04:12+0000") == ("17", "Mon")
+
+    def test_parses_z_suffix(self):
+        from triagent.insights import _published_parts
+
+        assert _published_parts("2026-08-10T17:04:12Z") == ("17", "Mon")
+
+    def test_normalises_to_utc(self):
+        """A +02:00 timestamp at 19:00 local is hour 17 UTC."""
+        from triagent.insights import _published_parts
+
+        assert _published_parts("2026-08-10T19:04:12+02:00")[0] == "17"
+
+    def test_blank_on_missing_or_bad_input(self):
+        from triagent.insights import _published_parts
+
+        assert _published_parts(None) == ("", "")
+        assert _published_parts("not a date") == ("", "")
+
+    def test_collect_rows_records_the_hour(self):
+        pub = MagicMock()
+        pub.list_media.return_value = [
+            {"id": "1", "media_type": "IMAGE", "timestamp": "2026-08-10T17:00:00+0000",
+             "permalink": "p", "caption": "c"}
+        ]
+        pub.media_insights.return_value = {}
+        row = collect_rows(pub)[0]
+        assert row["published_hour_utc"] == "17"
+        assert row["weekday"] == "Mon"
+
+
+def test_hour_and_weekday_are_csv_columns():
+    assert "published_hour_utc" in FIELDS and "weekday" in FIELDS
