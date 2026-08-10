@@ -352,3 +352,79 @@ class TestCheckFeeds:
             rows = check_feeds(["https://empty.example/feed"])
 
         assert rows[0]["ok"] is False
+
+
+class _WT:
+    def __init__(self, url, source, title="t"):
+        self.url, self.source, self.title = url, source, title
+        self.summary = ""
+
+
+class TestGoverningBodyPriority:
+    """World Triathlon is the governing body and must lead when present."""
+
+    def test_matches_triathlon_org(self):
+        from triagent.news import is_governing_body
+
+        assert is_governing_body(_WT("https://triathlon.org/news/x", "Feed"))
+
+    def test_matches_subdomain(self):
+        from triagent.news import is_governing_body
+
+        assert is_governing_body(_WT("https://www.worldtriathlon.org/a", "Feed"))
+
+    def test_matches_by_source_name(self):
+        from triagent.news import is_governing_body
+
+        assert is_governing_body(_WT("https://example.com/a", "World Triathlon"))
+
+    def test_does_not_match_other_sources(self):
+        from triagent.news import is_governing_body
+
+        assert not is_governing_body(_WT("https://tri247.com/a", "Tri247"))
+
+    def test_does_not_match_lookalike_domain(self):
+        """'nottriathlon.org' must not pass the host check."""
+        from triagent.news import is_governing_body
+
+        assert not is_governing_body(_WT("https://nottriathlon.org/a", "Other"))
+
+    def test_prioritize_moves_governing_body_first(self):
+        from triagent.news import prioritize
+
+        items = [
+            _WT("https://tri247.com/1", "Tri247"),
+            _WT("https://triathlon.org/2", "Feed"),
+            _WT("https://triathlete.com/3", "Triathlete"),
+        ]
+        assert prioritize(items)[0].url == "https://triathlon.org/2"
+
+    def test_prioritize_preserves_order_within_groups(self):
+        from triagent.news import prioritize
+
+        items = [
+            _WT("https://a.com/1", "A"),
+            _WT("https://triathlon.org/2", "F"),
+            _WT("https://b.com/3", "B"),
+            _WT("https://triathlon.org/4", "F"),
+        ]
+        out = [i.url for i in prioritize(items)]
+        assert out == [
+            "https://triathlon.org/2",
+            "https://triathlon.org/4",
+            "https://a.com/1",
+            "https://b.com/3",
+        ]
+
+    def test_prioritize_noop_without_governing_body(self):
+        from triagent.news import prioritize
+
+        items = [_WT("https://a.com/1", "A"), _WT("https://b.com/2", "B")]
+        assert [i.url for i in prioritize(items)] == [i.url for i in items]
+
+    def test_prioritize_keeps_every_item(self):
+        from triagent.news import prioritize
+
+        items = [_WT(f"https://a.com/{i}", "A") for i in range(5)]
+        items.append(_WT("https://triathlon.org/x", "F"))
+        assert len(prioritize(items)) == 6

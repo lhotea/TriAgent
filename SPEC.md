@@ -63,6 +63,10 @@ Fetches RSS feeds and returns recent items, newest first, deduplicated by URL.
   yields anything. A quiet news day or a couple of dead feeds degrades to a
   slightly older story rather than a failed run. Normal days stop at the first
   window, so same-day news is unaffected.
+- **Governing-body priority.** World Triathlon items are floated to the front
+  of the list and marked in the prompt, so the governing body leads whenever it
+  has news. Ordering carries the preference — a prompt instruction alone loses
+  to a livelier aggregator story sitting higher in the list.
 - **Per-feed isolation.** A feed that 404s, times out, or fails DNS is logged
   and skipped. The run continues on whatever is left.
 - **Control-character stripping.** Feed content is untrusted input that is about
@@ -135,7 +139,22 @@ With no photo the layout collapses (a 58% black band above the headline just
 reads as empty), so the card switches to a headline-led composition using the
 full canvas.
 
-- `render_card` → 1080×1350 PNG (4:5 feed post)
+Posts are **carousels of 3 slides** by default. Slide 1 is the lead — photo
+band plus the two-tone hook. Slides 2 and 3 carry one supporting story each as
+type on black: large index, headline, one-liner, source. Keeping the photo to
+the first slide is deliberate; repeating one image behind every slide reads as
+padding, and supporting stories scan faster as type.
+
+The brand mark is the real logo from `assets/images/logo.png`. That file is
+RGBA but fully opaque — the mark sits on a dark plate — so pasting it straight
+onto the black card would show a rectangle. Luminance supplies the alpha
+instead (the histogram separates cleanly: ~95% of pixels are plate at ≤41, the
+mark sits above 100), and the crop takes only the dominant shape so the
+artwork's decorative corner sparkle doesn't push the mark off-centre. The card's
+accent colour is sampled from the logo's own mint.
+
+- `render_slides` → N × 1080×1350 PNG (the carousel)
+- `render_card` → 1080×1350 PNG (slide 1, also used for single-image posts)
 - `render_reel_frame` → 1080×1920 PNG, composed at Reel dimensions rather than
   letterboxed, and keeping the top/bottom 15% clear of Instagram's UI overlay
 - `build_reel` → ffmpeg encodes a slow 1.0→1.08 zoom over the still, H.264+AAC,
@@ -188,6 +207,9 @@ be set manually on the profile, which the API cannot do.
 ### Stage 6 — Publishing (`publisher.py`)
 
 Two-step container flow: `POST /media` → poll `status_code` → `POST /media_publish`.
+Carousels take three stages: a child container per image (`is_carousel_item`),
+a parent collecting them (`media_type=CAROUSEL`), then publish. The caption goes
+on the parent only.
 
 - **Image**: ~60s polling. **Reel**: ~300s, because Meta must download and
   transcode the file.

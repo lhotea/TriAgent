@@ -230,7 +230,12 @@ Only Reels can carry audio. Image posts cannot, at all.
 | `REEL_AUDIO` | `assets/audio/theme.mp3` |
 | `REEL_SECONDS` | `8` (optional) |
 
-Leave `POST_FORMAT` unset or `image` for the static card.
+`POST_FORMAT` defaults to `carousel` (3 slides). Set `image` for a single card,
+or `reel` for video. `CAROUSEL_SLIDES` overrides the slide count (2-10).
+
+The brand mark comes from `assets/images/logo.png`. Replace that file to change
+it — the dark backing plate is keyed out automatically, and only the dominant
+shape is used, so surrounding artwork is ignored.
 
 ---
 

@@ -130,3 +130,57 @@ def test_render_card_creates_parent_dir(tmp_path, sample_brief):
     render_card(sample_brief, brand_name="TestBrand", out_path=out_path)
 
     assert out_path.exists()
+
+class TestLogo:
+    def test_logo_loads_and_crops_to_the_mark(self):
+        from triagent.image import load_logo
+
+        logo = load_logo()
+        assert logo is not None
+        assert logo.mode == "RGBA"
+        # Source is 1294x832; cropping to the mark must shrink it.
+        assert logo.width < 1294 and logo.height < 832
+
+    def test_backing_plate_is_keyed_out(self):
+        """The file is opaque RGBA — corners must end up transparent."""
+        from triagent.image import load_logo
+
+        logo = load_logo()
+        assert logo.getpixel((0, 0))[3] == 0
+
+    def test_missing_logo_returns_none_not_raises(self, tmp_path):
+        from triagent.image import load_logo
+
+        assert load_logo(tmp_path / "absent.png") is None
+
+    def test_paste_logo_reports_false_without_logo(self):
+        from PIL import Image
+        from triagent.image import paste_logo
+
+        img = Image.new("RGB", (100, 100))
+        assert paste_logo(img, None, cx=50, cy=50, height=20) is False
+
+
+class TestSlides:
+    def test_renders_requested_number_of_slides(self, tmp_assets_dir, sample_brief):
+        from triagent.image import render_slides
+
+        paths = render_slides(sample_brief, "Brand", tmp_assets_dir, "daily-x", count=3)
+        assert len(paths) == 3
+        assert all(p.exists() for p in paths)
+
+    def test_slide_filenames_are_ordered(self, tmp_assets_dir, sample_brief):
+        from triagent.image import render_slides
+
+        paths = render_slides(sample_brief, "Brand", tmp_assets_dir, "daily-x", count=3)
+        assert [p.name for p in paths] == [
+            "daily-x-1.png",
+            "daily-x-2.png",
+            "daily-x-3.png",
+        ]
+
+    def test_cta_names_the_destination(self):
+        """'Link in bio' alone doesn't say what's there."""
+        from triagent.image import CTA_TEXT
+
+        assert "TRIATHLON NEWS" in CTA_TEXT

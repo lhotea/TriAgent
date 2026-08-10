@@ -6,7 +6,7 @@ from typing import List
 import anthropic
 from pydantic import BaseModel, Field
 
-from .news import NewsItem
+from .news import NewsItem, is_governing_body
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +135,12 @@ a brand. Not a newsletter. Not a press release.
 
 ## Choosing the story
 
+Any item from World Triathlon is the sport's governing body reporting on itself: \
+results, rankings, qualification, rule changes. When such an item is present it \
+leads the post, unless it is trivial housekeeping with no consequence for \
+athletes. Those items are listed first in the input and marked, so you will not \
+have to hunt for them.
+
 Favour stories that make a reader see themselves: age-group drama, training decisions \
 with a real tradeoff, gear that changes outcomes, pro rivalries, rule changes people \
 will argue about. Avoid sponsorship announcements and minor product news — nobody \
@@ -164,7 +170,9 @@ class Summarizer:
             raise ValueError("no news items to summarize")
 
         bullets = "\n".join(
-            f"- [{i.source}] {i.title}\n  {i.summary[:400]}\n  {i.url}" for i in items
+            f"- [{i.source}]{' [GOVERNING BODY]' if is_governing_body(i) else ''} "
+            f"{i.title}\n  {i.summary[:400]}\n  {i.url}"
+            for i in items
         )
         user_prompt = (
             f"Brand: {brand_name}\n\n"

@@ -5,6 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
+from urllib.parse import urlparse
 
 import feedparser
 import requests
@@ -102,6 +103,35 @@ def check_feeds(feed_urls: list[str]) -> list[dict]:
             row["error"] = f"{type(exc).__name__}: {exc}"
         report.append(row)
     return report
+
+
+# World Triathlon is the sport's governing body, so its news outranks
+# aggregator coverage. Matched on host and on feed title, since the same
+# organisation publishes under several domains.
+GOVERNING_BODY_HOSTS = ("triathlon.org", "worldtriathlon.org")
+GOVERNING_BODY_NAMES = ("world triathlon", "worldtriathlon")
+
+
+def is_governing_body(item: "NewsItem") -> bool:
+    host = urlparse(item.url).netloc.lower()
+    if any(host == h or host.endswith("." + h) for h in GOVERNING_BODY_HOSTS):
+        return True
+    return any(name in item.source.lower() for name in GOVERNING_BODY_NAMES)
+
+
+def prioritize(items: list["NewsItem"]) -> list["NewsItem"]:
+    """Float World Triathlon items to the front, preserving recency within groups.
+
+    The model reads this list in order and is told the first entries are the
+    governing body, so ordering is how the preference is actually expressed —
+    a prompt instruction alone would be ignored whenever a livelier aggregator
+    story appeared higher up.
+    """
+    governing = [i for i in items if is_governing_body(i)]
+    rest = [i for i in items if not is_governing_body(i)]
+    if governing:
+        log.info("%d governing-body item(s) prioritized", len(governing))
+    return governing + rest
 
 
 def fetch_recent(

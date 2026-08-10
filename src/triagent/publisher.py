@@ -254,6 +254,47 @@ class InstagramPublisher:
         log.info("published media_id=%s", media_id)
         return media_id
 
+    def publish_carousel(self, image_urls: list[str], caption: str) -> str:
+        """Publish a multi-image carousel. Returns the published media ID.
+
+        Three API stages rather than two: each image becomes a child container
+        flagged is_carousel_item, then a parent container collects the children,
+        then the parent is published. Instagram accepts 2-10 children.
+
+        The caption belongs on the parent only — children carry none.
+        """
+        if not 2 <= len(image_urls) <= 10:
+            raise ValueError(
+                f"carousel needs 2-10 images, got {len(image_urls)}"
+            )
+
+        children: list[str] = []
+        for i, url in enumerate(image_urls, start=1):
+            log.info("creating carousel child %d/%d", i, len(image_urls))
+            child = self._post(
+                f"{self.ig_user_id}/media",
+                image_url=url,
+                is_carousel_item="true",
+            )
+            self._await_container(child["id"], attempts=20, delay=3)
+            children.append(child["id"])
+
+        log.info("creating carousel parent with %d children", len(children))
+        parent = self._post(
+            f"{self.ig_user_id}/media",
+            media_type="CAROUSEL",
+            children=",".join(children),
+            caption=caption,
+        )
+        self._await_container(parent["id"], attempts=30, delay=4)
+
+        published = self._post(
+            f"{self.ig_user_id}/media_publish", creation_id=parent["id"]
+        )
+        media_id = published["id"]
+        log.info("published carousel media_id=%s", media_id)
+        return media_id
+
     def publish_reel(
         self,
         video_url: str,

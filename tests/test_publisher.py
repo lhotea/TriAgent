@@ -477,3 +477,39 @@ class TestPublishReel:
         ):
             with pytest.raises(RuntimeError, match="bad codec"):
                 publisher.publish_reel("https://x/v.mp4", "cap")
+
+
+class TestPublishCarousel:
+    def _ok(self, publisher, ids):
+        post = MagicMock(side_effect=[{"id": i} for i in ids])
+        get = MagicMock(return_value={"status_code": "FINISHED"})
+        return post, get
+
+    def test_creates_child_then_parent_then_publishes(self, publisher):
+        post, get = self._ok(publisher, ["c1", "c2", "c3", "parent", "media"])
+        with patch.object(publisher, "_post", post), patch.object(publisher, "_get", get):
+            out = publisher.publish_carousel(["u1", "u2", "u3"], "cap")
+        assert out == "media"
+        # three children, each flagged, none carrying the caption
+        for i in range(3):
+            assert post.call_args_list[i][1]["is_carousel_item"] == "true"
+            assert "caption" not in post.call_args_list[i][1]
+        parent = post.call_args_list[3][1]
+        assert parent["media_type"] == "CAROUSEL"
+        assert parent["children"] == "c1,c2,c3"
+        assert parent["caption"] == "cap"
+
+    def test_rejects_single_image(self, publisher):
+        with pytest.raises(ValueError, match="2-10"):
+            publisher.publish_carousel(["only"], "cap")
+
+    def test_rejects_more_than_ten(self, publisher):
+        with pytest.raises(ValueError, match="2-10"):
+            publisher.publish_carousel([f"u{i}" for i in range(11)], "cap")
+
+    def test_propagates_child_processing_error(self, publisher):
+        post = MagicMock(return_value={"id": "c1"})
+        get = MagicMock(return_value={"status_code": "ERROR", "status": "bad image"})
+        with patch.object(publisher, "_post", post), patch.object(publisher, "_get", get):
+            with pytest.raises(RuntimeError, match="bad image"):
+                publisher.publish_carousel(["u1", "u2"], "cap")

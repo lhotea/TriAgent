@@ -46,7 +46,8 @@ jobs:
           AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}
-          POST_FORMAT: ${{ vars.POST_FORMAT || 'image' }}
+          POST_FORMAT: ${{ vars.POST_FORMAT || 'carousel' }}
+          CAROUSEL_SLIDES: ${{ vars.CAROUSEL_SLIDES }}
           REEL_AUDIO: ${{ vars.REEL_AUDIO }}
           REEL_SECONDS: ${{ vars.REEL_SECONDS }}
         run: python -m triagent --mode build
@@ -93,7 +94,8 @@ jobs:
           AFFILIATE_URLS: ${{ secrets.AFFILIATE_URLS }}
           BRAND_HANDLE: ${{ vars.BRAND_HANDLE }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}
-          POST_FORMAT: ${{ vars.POST_FORMAT || 'image' }}
+          POST_FORMAT: ${{ vars.POST_FORMAT || 'carousel' }}
+          CAROUSEL_SLIDES: ${{ vars.CAROUSEL_SLIDES }}
         run: python -m triagent --mode publish
 
       - name: Upload rendered card

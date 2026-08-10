@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import ASSETS_DIR, Settings
-from .image import pick_background, render_card, render_reel_frame
+from .image import pick_background, render_card, render_reel_frame, render_slides
 from .imagery import resolve_background
 from .monetization import assemble_caption
-from .news import fetch_recent_widening
+from .news import fetch_recent_widening, prioritize
 from .publisher import InstagramPublisher
 from .review import render_review_page
 from .video import build_reel
@@ -102,6 +102,16 @@ def _do_publish(settings: Settings, image_url: str, caption: str) -> str:
         ig_user_id=settings.ig_user_id, access_token=settings.ig_access_token
     )
 
+    if settings.post_format == "carousel":
+        urls = [
+            _asset_url(settings, f"{dated_name('daily', '')}-{n}.png")
+            for n in range(1, settings.carousel_slides + 1)
+        ]
+        for url in urls:
+            log.info("waiting for slide URL: %s", url)
+            publisher.wait_for_image(url)
+        return publisher.publish_carousel(image_urls=urls, caption=caption)
+
     if settings.post_format == "reel":
         video_url = _asset_url(settings, dated_name("daily", ".mp4"))
         log.info("waiting for video URL to be reachable: %s", video_url)
@@ -134,7 +144,7 @@ def build(settings: Settings) -> RunResult:
             "unreachable. Run `python -m triagent --mode feedcheck` to see which."
         )
 
-    top_items = items[: max(settings.max_headlines * 2, 12)]
+    top_items = prioritize(items)[: max(settings.max_headlines * 2, 12)]
 
     summarizer = Summarizer(api_key=settings.anthropic_api_key, model=settings.model)
     brief = summarizer.build_brief(top_items, brand_name=settings.brand_name)
@@ -156,6 +166,16 @@ def build(settings: Settings) -> RunResult:
         out_path=settings.image_path,
         background=background,
     )
+
+    if settings.post_format == "carousel":
+        render_slides(
+            brief,
+            brand_name=settings.brand_name,
+            out_dir=settings.image_path.parent,
+            stem=dated_name("daily", "").rstrip("-") or "daily",
+            background=background,
+            count=settings.carousel_slides,
+        )
 
     if settings.post_format == "reel":
         frame = settings.image_path.with_name("reel_frame.png")
@@ -223,6 +243,12 @@ def publish_from_build(settings: Settings) -> RunResult:
         mp4 = settings.image_path.with_name(dated_name("daily", ".mp4"))
         if not mp4.exists():
             raise RuntimeError(f"no rendered reel at {mp4}; run build step first")
+
+    if settings.post_format == "carousel":
+        for n in range(1, settings.carousel_slides + 1):
+            slide = settings.image_path.with_name(f"{dated_name('daily', '')}-{n}.png")
+            if not slide.exists():
+                raise RuntimeError(f"no rendered slide at {slide}; run build step first")
 
     settings.require_publish_config()
 

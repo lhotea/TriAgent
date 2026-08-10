@@ -16,13 +16,111 @@ MARGIN = 64
 BG_TOP = (10, 10, 12)
 BG_BOTTOM = (0, 0, 0)
 BLACK = (0, 0, 0)
-ACCENT = (45, 212, 191)     # teal — the emphasis colour on headline spans
+# Sampled from the brand logo's accent dot so card and mark agree.
+ACCENT = (110, 223, 171)
 TEXT = (255, 255, 255)
 MUTED = (150, 155, 160)
 
 # Fraction of the canvas given to the photo. The headline occupies the rest and
 # is allowed to run to the bottom edge.
 IMAGE_FRACTION = 0.58
+
+# "LINK IN BIO" alone says nothing about what's there. Naming the payoff is
+# what earns the tap.
+CTA_TEXT = "MORE TRIATHLON NEWS \u2192 LINK IN BIO"
+
+# Height kept clear at the bottom of every slide for the mark and CTA pill.
+FOOTER_BAND = 150
+
+
+LOGO_PATH = Path(__file__).resolve().parents[2] / "assets" / "images" / "logo.png"
+_LOGO_CACHE: dict[str, Image.Image | None] = {}
+
+
+def _main_mark_bbox(alpha: Image.Image) -> tuple[int, int, int, int] | None:
+    """Bounding box of the dominant shape in an alpha mask.
+
+    The source artwork carries a small decorative sparkle in one corner. A
+    plain getbbox() includes it, which at watermark size pushes the actual mark
+    off-centre and shrinks it. Projecting the mask onto the x-axis splits the
+    image into runs of occupied columns; the run holding the most alpha is the
+    mark, and anything detached from it is ignored.
+    """
+    w, h = alpha.size
+    cols = [0] * w
+    px = alpha.load()
+    for x in range(w):
+        total = 0
+        for y in range(h):
+            total += px[x, y]
+        cols[x] = total
+
+    runs, start = [], None
+    for x, weight in enumerate(cols):
+        if weight and start is None:
+            start = x
+        elif not weight and start is not None:
+            runs.append((start, x))
+            start = None
+    if start is not None:
+        runs.append((start, w))
+    if not runs:
+        return None
+
+    x0, x1 = max(runs, key=lambda r: sum(cols[r[0] : r[1]]))
+    ys = [y for y in range(h) if any(px[x, y] for x in range(x0, x1))]
+    if not ys:
+        return None
+    return (x0, min(ys), x1, max(ys) + 1)
+
+
+def load_logo(path: Path = LOGO_PATH) -> Image.Image | None:
+    """Load the brand mark as RGBA with its dark backing plate removed.
+
+    The supplied file is RGBA but fully opaque — the mark sits on a dark green
+    plate rather than on transparency. Pasting it straight onto the black card
+    would show that plate as a rectangle. Since the artwork is light-on-dark,
+    luminance makes a serviceable alpha channel: bright strokes stay, the plate
+    falls away.
+
+    Cached because it is composited onto every slide.
+    """
+    key = str(path)
+    if key in _LOGO_CACHE:
+        return _LOGO_CACHE[key]
+
+    logo: Image.Image | None = None
+    try:
+        with Image.open(path) as raw:
+            src = raw.convert("RGBA")
+        lum = src.convert("L")
+        # The histogram separates cleanly: ~95% of pixels are the plate at
+        # luminance <=41, the mark sits above 100. Keying in that gap removes
+        # the plate while the ramp keeps anti-aliased stroke edges smooth.
+        alpha = lum.point(lambda v: 0 if v < 60 else min(255, int((v - 60) * 5.1)))
+        src.putalpha(alpha)
+        logo = src.crop(_main_mark_bbox(alpha) or alpha.getbbox() or (0, 0, *src.size))
+    except Exception as exc:
+        log.warning("could not load logo %s (%s) — using drawn mark", path, exc)
+
+    _LOGO_CACHE[key] = logo
+    return logo
+
+
+def paste_logo(
+    img: Image.Image, logo: Image.Image | None, *, cx: int, cy: int, height: int
+) -> bool:
+    """Composite the logo centred on (cx, cy) at the given height.
+
+    Returns False when there is no logo, so callers can fall back to the drawn
+    mark rather than silently rendering nothing.
+    """
+    if logo is None:
+        return False
+    w = max(1, int(logo.width * (height / logo.height)))
+    resized = logo.resize((w, height), Image.LANCZOS)
+    img.paste(resized, (int(cx - w / 2), int(cy - height / 2)), resized)
+    return True
 
 
 def pick_background(backgrounds_dir: Path, seed: str) -> Path | None:
@@ -216,7 +314,11 @@ def _draw_two_tone(
 
 
 def _fit_headline_font(
-    draw: ImageDraw.ImageDraw, words: list[str], max_width: int, max_lines: int
+    draw: ImageDraw.ImageDraw,
+    words: list[str],
+    max_width: int,
+    max_lines: int,
+    max_height: int | None = None,
 ) -> tuple[ImageFont.FreeTypeFont, int]:
     """Pick the largest headline size that fits in max_lines.
 
@@ -234,8 +336,13 @@ def _fit_headline_font(
                 lines += 1
                 cx = 0.0
             cx += w + space
-        if lines <= max_lines:
-            return font, size
+        if lines > max_lines:
+            continue
+        # Height matters as much as line count: four lines that fit the budget
+        # can still run into the footer, which is where the CTA and mark live.
+        if max_height is not None and lines * int(size * 0.92) > max_height:
+            continue
+        return font, size
     return _load_font(52, bold=True, condensed=True), 52
 
 
@@ -245,6 +352,112 @@ def _logo_mark(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, label: str) 
     f = _load_font(int(r * 0.9), bold=True)
     tw = draw.textlength(label, font=f)
     draw.text((cx - tw / 2, cy - r * 0.62), label, fill=TEXT, font=f)
+
+
+def _draw_footer(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    brand_name: str,
+    logo: Image.Image | None,
+    *,
+    show_cta: bool = True,
+) -> None:
+    """Brand mark bottom-left, CTA pill centred. Shared by every slide."""
+    if not paste_logo(img, logo, cx=MARGIN + 34, cy=H - MARGIN - 20, height=64):
+        _logo_mark(draw, MARGIN + 30, H - MARGIN - 20, 30, brand_name[:1].upper() or "T")
+
+    if not show_cta:
+        return
+
+    # Shrink to fit rather than overflow — the wording matters more than the size.
+    size = 26
+    font = _load_font(size, bold=True)
+    while size > 16 and draw.textlength(CTA_TEXT, font=font) > W - 2 * MARGIN - 150:
+        size -= 2
+        font = _load_font(size, bold=True)
+
+    tw = draw.textlength(CTA_TEXT, font=font)
+    pill_w, pill_h = tw + 52, 52
+    px = (W - pill_w) / 2
+    py = H - MARGIN - 46
+    draw.rounded_rectangle(
+        [px, py, px + pill_w, py + pill_h], radius=26, outline=TEXT, width=2
+    )
+    draw.text((px + 26, py + (pill_h - size) / 2 - 3), CTA_TEXT, fill=TEXT, font=font)
+
+
+def render_slide(
+    brief: DailyBrief,
+    index: int,
+    brand_name: str,
+    out_path: Path,
+    background: Path | None = None,
+) -> Path:
+    """Render one carousel slide.
+
+    Slide 0 is the lead: photo band plus the oversized two-tone hook. Later
+    slides carry one story each — a large index, the headline, and the
+    one-liner — on black. Keeping the photo to the first slide is deliberate:
+    reusing the same image behind every slide reads as padding, and the
+    supporting stories are quicker to scan as type.
+    """
+    if index == 0:
+        return render_card(brief, brand_name, out_path, background)
+
+    logo = load_logo()
+    img = Image.new("RGB", (W, H), BLACK)
+    draw = ImageDraw.Draw(img)
+
+    headlines = brief.headlines[1:]
+    story = headlines[index - 1] if index - 1 < len(headlines) else None
+
+    brand_font = _load_font(30, bold=True)
+    draw.text((MARGIN, MARGIN + 8), brand_name.upper(), fill=TEXT, font=brand_font)
+    draw.line([(MARGIN, MARGIN + 62), (W - MARGIN, MARGIN + 62)], fill=ACCENT, width=3)
+
+    if story is not None:
+        num_font = _load_font(150, bold=True, condensed=True)
+        draw.text((MARGIN, MARGIN + 110), f"{index + 1:02}", fill=ACCENT, font=num_font)
+
+        title_font, size = _fit_headline_font(
+            draw, story.title.upper().split(), W - 2 * MARGIN, 5
+        )
+        title_font = _load_font(min(size, 82), bold=True, condensed=True)
+        y = MARGIN + 300
+        for line in _wrap(draw, story.title.upper(), title_font, W - 2 * MARGIN)[:5]:
+            draw.text((MARGIN, y), line, fill=TEXT, font=title_font)
+            y += int(min(size, 82) * 0.92)
+
+        body_font = _load_font(34)
+        y += 34
+        for line in _wrap(draw, story.one_liner, body_font, W - 2 * MARGIN)[:4]:
+            draw.text((MARGIN, y), line, fill=MUTED, font=body_font)
+            y += 46
+
+        src_font = _load_font(26, bold=True)
+        draw.text((MARGIN, y + 20), story.source.upper(), fill=ACCENT, font=src_font)
+
+    _draw_footer(img, draw, brand_name, logo, show_cta=True)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(out_path, format="PNG", optimize=True)
+    log.info("rendered slide %d to %s", index + 1, out_path)
+    return out_path
+
+
+def render_slides(
+    brief: DailyBrief,
+    brand_name: str,
+    out_dir: Path,
+    stem: str,
+    background: Path | None = None,
+    count: int = 3,
+) -> list[Path]:
+    """Render `count` carousel slides, returning their paths in order."""
+    return [
+        render_slide(brief, i, brand_name, out_dir / f"{stem}-{i + 1}.png", background)
+        for i in range(count)
+    ]
 
 
 def render_card(
@@ -260,6 +473,7 @@ def render_card(
     fills the remaining space in condensed capitals — white, with the story's
     subject in accent colour.
     """
+    logo = load_logo()
     img = Image.new("RGB", (W, H), BLACK)
     draw = ImageDraw.Draw(img)
 
@@ -302,9 +516,11 @@ def render_card(
     # --- divider rule with centred mark -----------------------------------
     rule_y = band_h
     mark_r = 26
-    draw.line([(MARGIN, rule_y), (W // 2 - mark_r - 18, rule_y)], fill=TEXT, width=2)
-    draw.line([(W // 2 + mark_r + 18, rule_y), (W - MARGIN, rule_y)], fill=TEXT, width=2)
-    _logo_mark(draw, W // 2, rule_y, mark_r, brand_name[:1].upper() or "T")
+    gap = 60
+    draw.line([(MARGIN, rule_y), (W // 2 - gap, rule_y)], fill=TEXT, width=2)
+    draw.line([(W // 2 + gap, rule_y), (W - MARGIN, rule_y)], fill=TEXT, width=2)
+    if not paste_logo(img, logo, cx=W // 2, cy=rule_y, height=76):
+        _logo_mark(draw, W // 2, rule_y, mark_r, brand_name[:1].upper() or "T")
 
     # --- headline ---------------------------------------------------------
     words = brief.hook.upper().split()
@@ -312,10 +528,14 @@ def render_card(
     max_width = W - 2 * MARGIN
     # Without a photo there's room for a bigger headline over more lines.
     max_lines = 4 if has_photo else 6
-    font, size = _fit_headline_font(draw, words, max_width, max_lines)
-    line_height = int(size * 0.92)  # tight leading — lines almost touch
-
     text_top = rule_y + 54
+    # Reserve the footer band so the headline can never collide with the CTA
+    # pill or the brand mark.
+    headline_space = (H - FOOTER_BAND) - text_top
+    font, size = _fit_headline_font(
+        draw, words, max_width, max_lines, max_height=headline_space
+    )
+    line_height = int(size * 0.92)  # tight leading — lines almost touch
     _draw_two_tone(
         draw,
         words,
@@ -328,19 +548,7 @@ def render_card(
         max_lines=max_lines,
     )
 
-    # --- footer -----------------------------------------------------------
-    _logo_mark(draw, MARGIN + 30, H - MARGIN - 20, 30, brand_name[:1].upper() or "T")
-
-    cta_font = _load_font(24, bold=True)
-    cta = "LINK IN BIO"
-    cw = draw.textlength(cta, font=cta_font)
-    pill_w, pill_h = cw + 52, 52
-    px = (W - pill_w) / 2
-    py = H - MARGIN - 46
-    draw.rounded_rectangle(
-        [px, py, px + pill_w, py + pill_h], radius=26, outline=TEXT, width=2
-    )
-    draw.text((px + 26, py + 13), cta, fill=TEXT, font=cta_font)
+    _draw_footer(img, draw, brand_name, logo)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(out_path, format="PNG", optimize=True)

@@ -83,9 +83,10 @@ class Settings:
     affiliate_urls: list[str] = field(default_factory=list)
     feeds: list[str] = field(default_factory=lambda: list(DEFAULT_FEEDS))
     model: str = "claude-opus-4-7"
-    # "image" (default) or "reel". Reels are the only format Instagram lets
-    # carry audio, so music requires post_format="reel".
-    post_format: str = "image"
+    # "carousel" (default), "image" or "reel". Reels are the only format
+    # Instagram lets carry audio, so music requires post_format="reel".
+    post_format: str = "carousel"
+    carousel_slides: int = 3
     reel_audio: str | None = None
     reel_seconds: int = 8
     # Optional picture sources, tried in this order. Both absent means the card
@@ -112,7 +113,8 @@ class Settings:
             # empty string for an unset `vars.X`, so the env var exists but is
             # blank and get()'s default never fires. That is how the brand name
             # vanished from the card and the caption ended with "link in bio ()".
-            post_format=(os.environ.get("POST_FORMAT") or "image").lower(),
+            post_format=(os.environ.get("POST_FORMAT") or "carousel").lower(),
+            carousel_slides=max(2, min(10, int(os.environ.get("CAROUSEL_SLIDES") or 3))),
             reel_audio=_optional("REEL_AUDIO"),
             reel_seconds=int(os.environ.get("REEL_SECONDS") or 8),
             image_gen_api_key=_optional("IMAGE_GEN_API_KEY"),

@@ -12,7 +12,13 @@ def _cta(brand_handle: str, *, has_affiliate: bool) -> str:
     Two things it must not do: promise "gear picks" when no affiliate links are
     configured, and render an empty pair of brackets when BRAND_HANDLE is unset.
     """
-    what = "Full stories + today's gear picks" if has_affiliate else "Full stories"
+    # Name what's on the other end. "Link in bio" alone asks for a tap without
+    # saying what it buys.
+    what = (
+        "More triathlon news, every story from today, plus this week's gear picks"
+        if has_affiliate
+        else "More triathlon news and every story from today"
+    )
     handle = brand_handle.strip()
     tail = f" ({handle})" if handle else ""
     return f"🔗 {what} → link in bio{tail}"
