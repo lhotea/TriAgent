@@ -93,3 +93,120 @@ class TestBuildReel:
         ):
             with pytest.raises(RuntimeError, match="ffmpeg exited 1"):
                 build_reel(tmp_path / "f.png", tmp_path / "o.mp4")
+
+
+class TestPickMusic:
+    def test_returns_none_without_directory(self, tmp_path):
+        from triagent.video import pick_music
+
+        assert pick_music(tmp_path / "absent", "2026-08-10") is None
+
+    def test_returns_none_when_empty(self, tmp_path):
+        from triagent.video import pick_music
+
+        (tmp_path / "music").mkdir()
+        assert pick_music(tmp_path / "music", "2026-08-10") is None
+
+    def test_ignores_non_audio_files(self, tmp_path):
+        from triagent.video import pick_music
+
+        d = tmp_path / "music"
+        d.mkdir()
+        (d / "README.md").write_text("notes")
+        assert pick_music(d, "2026-08-10") is None
+
+    def test_picks_an_audio_file(self, tmp_path):
+        from triagent.video import pick_music
+
+        d = tmp_path / "music"
+        d.mkdir()
+        (d / "a.mp3").write_bytes(b"x")
+        assert pick_music(d, "2026-08-10").name == "a.mp3"
+
+    def test_same_day_picks_same_track(self, tmp_path):
+        """Retries within a day must not swap the music."""
+        from triagent.video import pick_music
+
+        d = tmp_path / "music"
+        d.mkdir()
+        for n in "abcde":
+            (d / f"{n}.mp3").write_bytes(b"x")
+        assert pick_music(d, "2026-08-10") == pick_music(d, "2026-08-10")
+
+
+class TestSlideshowCommand:
+    def _slides(self, n=3):
+        return [Path(f"s{i}.png") for i in range(n)]
+
+    def test_one_input_per_slide(self):
+        from triagent.video import build_slideshow_command
+
+        cmd = build_slideshow_command(self._slides(3), Path("o.mp4"))
+        assert cmd.count("-loop") == 3
+
+    def test_concatenates_all_slides(self):
+        from triagent.video import build_slideshow_command
+
+        cmd = " ".join(build_slideshow_command(self._slides(3), Path("o.mp4")))
+        assert "concat=n=3" in cmd
+
+    def test_outputs_reel_dimensions(self):
+        from triagent.video import REEL_H, REEL_W, build_slideshow_command
+
+        cmd = " ".join(build_slideshow_command(self._slides(), Path("o.mp4")))
+        assert f"s={REEL_W}x{REEL_H}" in cmd
+
+    def test_silent_without_audio(self):
+        from triagent.video import build_slideshow_command
+
+        cmd = build_slideshow_command(self._slides(), Path("o.mp4"))
+        assert "-an" in cmd and "aac" not in cmd
+
+    def test_maps_audio_track_when_given(self):
+        from triagent.video import build_slideshow_command
+
+        cmd = build_slideshow_command(
+            self._slides(3), Path("o.mp4"), audio_path=Path("m.mp3")
+        )
+        assert "m.mp3" in cmd
+        assert "aac" in cmd
+        # audio is input index 3 when there are 3 slides
+        assert "3:a" in cmd
+
+    def test_audio_never_extends_the_video(self):
+        from triagent.video import build_slideshow_command
+
+        cmd = build_slideshow_command(
+            self._slides(), Path("o.mp4"), audio_path=Path("m.mp3")
+        )
+        assert "-shortest" in cmd
+
+    def test_audio_fades_out(self):
+        from triagent.video import build_slideshow_command
+
+        cmd = " ".join(
+            build_slideshow_command(
+                self._slides(), Path("o.mp4"), audio_path=Path("m.mp3")
+            )
+        )
+        assert "afade" in cmd
+
+    def test_rejects_empty_slide_list(self):
+        from triagent.video import build_slideshow
+
+        with pytest.raises(ValueError, match="no slides"):
+            build_slideshow([], Path("o.mp4"))
+
+    def test_missing_audio_degrades_to_silent(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+        from triagent.video import build_slideshow
+
+        out = tmp_path / "o.mp4"
+        out.write_bytes(b"x")
+        proc = MagicMock(returncode=0, stderr="")
+        with (
+            patch("triagent.video.ffmpeg_available", return_value=True),
+            patch("triagent.video.subprocess.run", return_value=proc) as run,
+        ):
+            build_slideshow([tmp_path / "s.png"], out, audio_path=tmp_path / "no.mp3")
+        assert "-an" in run.call_args[0][0]

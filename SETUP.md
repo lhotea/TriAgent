@@ -210,9 +210,16 @@ the job fails loudly rather than appearing to work.
 
 ## 7. Optional — Reels with music
 
-Only Reels can carry audio. Image posts cannot, at all.
+**Only Reels can carry audio.** Carousels and single images are silent — an
+Instagram rule, not a limit of this agent. So a post cannot be both a carousel
+and have music. What it *can* be is a Reel that steps through the same three
+slides with music over them, which gives you multiple stories and sound in one
+post. That is what `POST_FORMAT=reel` now produces.
 
-1. Add a **licensed** audio file to the repo, e.g. `assets/audio/theme.mp3`.
+1. Drop **licensed** audio into `assets/music/`. One track is chosen per day
+   from the date, so a given day always gets the same one. An empty directory
+   means a silent Reel, which still publishes. `REEL_AUDIO` still works as an
+   explicit single-file override.
 
    > ⚠️ The API cannot use Instagram's in-app music library — that catalogue is
    > licensed for use inside the app only. Audio published this way is baked
@@ -227,8 +234,8 @@ Only Reels can carry audio. Image posts cannot, at all.
 | Variable | Value |
 |---|---|
 | `POST_FORMAT` | `reel` |
-| `REEL_AUDIO` | `assets/audio/theme.mp3` |
-| `REEL_SECONDS` | `8` (optional) |
+| `REEL_AUDIO` | optional — pins one file instead of rotating `assets/music/` |
+| `REEL_SECONDS` | seconds **per slide** (default 4) |
 
 `POST_FORMAT` defaults to `carousel` (3 slides). Set `image` for a single card,
 or `reel` for video. `CAROUSEL_SLIDES` overrides the slide count (2-10).

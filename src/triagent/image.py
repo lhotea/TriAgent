@@ -361,10 +361,12 @@ def _draw_footer(
     logo: Image.Image | None,
     *,
     show_cta: bool = True,
+    size: tuple[int, int] | None = None,
 ) -> None:
     """Brand mark bottom-left, CTA pill centred. Shared by every slide."""
-    if not paste_logo(img, logo, cx=MARGIN + 34, cy=H - MARGIN - 20, height=64):
-        _logo_mark(draw, MARGIN + 30, H - MARGIN - 20, 30, brand_name[:1].upper() or "T")
+    w, h = size or (W, H)
+    if not paste_logo(img, logo, cx=MARGIN + 34, cy=h - MARGIN - 20, height=64):
+        _logo_mark(draw, MARGIN + 30, h - MARGIN - 20, 30, brand_name[:1].upper() or "T")
 
     if not show_cta:
         return
@@ -372,14 +374,14 @@ def _draw_footer(
     # Shrink to fit rather than overflow — the wording matters more than the size.
     size = 26
     font = _load_font(size, bold=True)
-    while size > 16 and draw.textlength(CTA_TEXT, font=font) > W - 2 * MARGIN - 150:
+    while size > 16 and draw.textlength(CTA_TEXT, font=font) > w - 2 * MARGIN - 150:
         size -= 2
         font = _load_font(size, bold=True)
 
     tw = draw.textlength(CTA_TEXT, font=font)
     pill_w, pill_h = tw + 52, 52
-    px = (W - pill_w) / 2
-    py = H - MARGIN - 46
+    px = (w - pill_w) / 2
+    py = h - MARGIN - 46
     draw.rounded_rectangle(
         [px, py, px + pill_w, py + pill_h], radius=26, outline=TEXT, width=2
     )
@@ -392,6 +394,7 @@ def render_slide(
     brand_name: str,
     out_path: Path,
     background: Path | None = None,
+    size: tuple[int, int] | None = None,
 ) -> Path:
     """Render one carousel slide.
 
@@ -401,11 +404,15 @@ def render_slide(
     reusing the same image behind every slide reads as padding, and the
     supporting stories are quicker to scan as type.
     """
+    w, h = size or (W, H)
+
     if index == 0:
+        if (w, h) == (REEL_W, REEL_H):
+            return render_reel_frame(brief, brand_name, out_path, background)
         return render_card(brief, brand_name, out_path, background)
 
     logo = load_logo()
-    img = Image.new("RGB", (W, H), BLACK)
+    img = Image.new("RGB", (w, h), BLACK)
     draw = ImageDraw.Draw(img)
 
     headlines = brief.headlines[1:]
@@ -413,35 +420,36 @@ def render_slide(
 
     brand_font = _load_font(30, bold=True)
     draw.text((MARGIN, MARGIN + 8), brand_name.upper(), fill=TEXT, font=brand_font)
-    draw.line([(MARGIN, MARGIN + 62), (W - MARGIN, MARGIN + 62)], fill=ACCENT, width=3)
+    draw.line([(MARGIN, MARGIN + 62), (w - MARGIN, MARGIN + 62)], fill=ACCENT, width=3)
 
     if story is not None:
         num_font = _load_font(150, bold=True, condensed=True)
         draw.text((MARGIN, MARGIN + 110), f"{index + 1:02}", fill=ACCENT, font=num_font)
 
-        title_font, size = _fit_headline_font(
-            draw, story.title.upper().split(), W - 2 * MARGIN, 5
+        _, fitted = _fit_headline_font(
+            draw, story.title.upper().split(), w - 2 * MARGIN, 5
         )
-        title_font = _load_font(min(size, 82), bold=True, condensed=True)
+        pt = min(fitted, 82)
+        title_font = _load_font(pt, bold=True, condensed=True)
         y = MARGIN + 300
-        for line in _wrap(draw, story.title.upper(), title_font, W - 2 * MARGIN)[:5]:
+        for line in _wrap(draw, story.title.upper(), title_font, w - 2 * MARGIN)[:5]:
             draw.text((MARGIN, y), line, fill=TEXT, font=title_font)
-            y += int(min(size, 82) * 0.92)
+            y += int(pt * 0.92)
 
         body_font = _load_font(34)
         y += 34
-        for line in _wrap(draw, story.one_liner, body_font, W - 2 * MARGIN)[:4]:
+        for line in _wrap(draw, story.one_liner, body_font, w - 2 * MARGIN)[:4]:
             draw.text((MARGIN, y), line, fill=MUTED, font=body_font)
             y += 46
 
         src_font = _load_font(26, bold=True)
         draw.text((MARGIN, y + 20), story.source.upper(), fill=ACCENT, font=src_font)
 
-    _draw_footer(img, draw, brand_name, logo, show_cta=True)
+    _draw_footer(img, draw, brand_name, logo, show_cta=True, size=(w, h))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(out_path, format="PNG", optimize=True)
-    log.info("rendered slide %d to %s", index + 1, out_path)
+    log.info("rendered slide %d (%dx%d) to %s", index + 1, w, h, out_path)
     return out_path
 
 
@@ -452,10 +460,18 @@ def render_slides(
     stem: str,
     background: Path | None = None,
     count: int = 3,
+    size: tuple[int, int] | None = None,
 ) -> list[Path]:
-    """Render `count` carousel slides, returning their paths in order."""
+    """Render `count` slides, returning their paths in order.
+
+    `size` lets the same slides be produced at Reel dimensions, which is how a
+    Reel can carry the carousel's stories *and* audio — Instagram allows sound
+    on video only, never on a carousel.
+    """
     return [
-        render_slide(brief, i, brand_name, out_dir / f"{stem}-{i + 1}.png", background)
+        render_slide(
+            brief, i, brand_name, out_dir / f"{stem}-{i + 1}.png", background, size
+        )
         for i in range(count)
     ]
 

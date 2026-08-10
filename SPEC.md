@@ -157,8 +157,14 @@ accent colour is sampled from the logo's own mint.
 - `render_card` → 1080×1350 PNG (slide 1, also used for single-image posts)
 - `render_reel_frame` → 1080×1920 PNG, composed at Reel dimensions rather than
   letterboxed, and keeping the top/bottom 15% clear of Instagram's UI overlay
-- `build_reel` → ffmpeg encodes a slow 1.0→1.08 zoom over the still, H.264+AAC,
-  `+faststart`
+- `build_slideshow` → ffmpeg sequences the slides at 1080×1920 with a gentle
+  per-slide zoom, H.264+AAC, `+faststart`
+
+Music lives in `assets/music/`, one track chosen per day from the date so
+retries don't swap it. Empty directory means a silent Reel. This is the only
+route to a post with both several stories and sound: Instagram permits audio on
+video alone, so the carousel's slides are sequenced into a Reel rather than
+posted as separate images.
 
 Local photos in `assets/backgrounds/` act as the last fallback before "no
 picture", selected deterministically by date. Whatever the source, images used

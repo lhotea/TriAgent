@@ -7,19 +7,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import ASSETS_DIR, Settings
-from .image import pick_background, render_card, render_reel_frame, render_slides
+from .image import (
+    REEL_H,
+    REEL_W,
+    pick_background,
+    render_card,
+    render_slides,
+)
 from .imagery import resolve_background
 from .monetization import assemble_caption
 from .news import fetch_recent_widening, prioritize
 from .publisher import InstagramPublisher
 from .review import render_review_page
-from .video import build_reel
+from .video import build_slideshow, pick_music
 from .summarizer import DailyBrief, Summarizer
 
 log = logging.getLogger(__name__)
 
 # Drop your own licensed photos here; empty means the gradient is used.
 BACKGROUNDS_DIR = ASSETS_DIR / "backgrounds"
+# Drop licensed audio here; empty means a silent Reel.
+MUSIC_DIR = ASSETS_DIR / "music"
 
 
 @dataclass
@@ -178,19 +186,28 @@ def build(settings: Settings) -> RunResult:
         )
 
     if settings.post_format == "reel":
-        frame = settings.image_path.with_name("reel_frame.png")
-        render_reel_frame(
+        # Sequence the same slides into video. Instagram allows audio on video
+        # only, so this is the only way a post carries several stories AND
+        # music — a carousel of images is always silent.
+        frames = render_slides(
             brief,
             brand_name=settings.brand_name,
-            out_path=frame,
+            out_dir=settings.image_path.parent,
+            stem="reel_frame",
             background=background,
+            count=settings.carousel_slides,
+            size=(REEL_W, REEL_H),
         )
-        audio = Path(settings.reel_audio) if settings.reel_audio else None
-        build_reel(
-            frame,
+        audio = (
+            Path(settings.reel_audio)
+            if settings.reel_audio
+            else pick_music(MUSIC_DIR, seed)
+        )
+        build_slideshow(
+            frames,
             settings.image_path.with_name("daily.mp4"),
             audio_path=audio,
-            duration=settings.reel_seconds,
+            seconds_per_slide=settings.reel_seconds,
         )
 
     caption = assemble_caption(
