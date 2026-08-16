@@ -526,3 +526,73 @@ class TestExcludeAlreadyPosted:
         items = [self._item("https://a")]
         with patch("triagent.news.fetch_recent", return_value=items):
             assert fetch_recent_widening(["f"], exclude={"https://a"}) == []
+
+
+class TestSourceDiversity:
+    """A recency sort hands the whole list to whichever publisher posts most
+    often. The model only sees the first dozen, so ordering IS the selection."""
+
+    def _items(self, spec):
+        """spec: list of (source, count) — newest first within each source."""
+        import datetime as _dt
+        from triagent.news import NewsItem
+
+        now = _dt.datetime.now(_dt.timezone.utc)
+        out, n = [], 0
+        for source, count in spec:
+            for i in range(count):
+                out.append(
+                    NewsItem(
+                        f"{source} {i}", "", f"https://{source}.com/{i}",
+                        source, now - _dt.timedelta(hours=n),
+                    )
+                )
+                n += 1
+        out.sort(key=lambda i: i.published, reverse=True)
+        return out
+
+    def test_high_volume_source_no_longer_monopolises(self):
+        from triagent.news import prioritize
+
+        items = self._items([("Loud", 9), ("QuietA", 1), ("QuietB", 1)])
+        sources = [i.source for i in prioritize(items)[:3]]
+        assert set(sources) == {"Loud", "QuietA", "QuietB"}
+
+    def test_every_source_appears_before_any_repeats(self):
+        from triagent.news import diversify
+
+        items = self._items([("A", 3), ("B", 2), ("C", 1)])
+        first_three = [i.source for i in diversify(items)[:3]]
+        assert sorted(first_three) == ["A", "B", "C"]
+
+    def test_recency_preserved_within_a_source(self):
+        from triagent.news import diversify
+
+        items = self._items([("A", 3)])
+        titles = [i.title for i in diversify(items)]
+        assert titles == ["A 0", "A 1", "A 2"]
+
+    def test_no_items_are_lost(self):
+        from triagent.news import diversify
+
+        items = self._items([("A", 4), ("B", 2), ("C", 7)])
+        assert len(diversify(items)) == 13
+
+    def test_governing_body_still_leads(self):
+        """Diversity must not cost World Triathlon its top slot."""
+        from triagent.news import prioritize
+
+        items = self._items([("Loud", 9)])
+        items += self._items([("World Triathlon", 1)])
+        assert prioritize(items)[0].source == "World Triathlon"
+
+    def test_single_source_is_unchanged(self):
+        from triagent.news import diversify
+
+        items = self._items([("Only", 4)])
+        assert [i.title for i in diversify(items)] == [i.title for i in items]
+
+    def test_empty_list(self):
+        from triagent.news import diversify
+
+        assert diversify([]) == []

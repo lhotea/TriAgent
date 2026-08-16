@@ -80,7 +80,13 @@ Verify before relying on them:
 python -m triagent --mode feedcheck
 ```
 
-The build log also prints `N/M feeds reachable` on every run.
+The build log prints `N/M feeds reachable` on every run, plus `items per
+source` and `top 12 by source` — so if one publisher is dominating, it shows in
+the log rather than only in the finished post.
+
+Stories are round-robined across publishers, so a high-volume site cannot crowd
+out the rest. Adding more feeds widens the pool without any one of them taking
+over.
 
 ---
 

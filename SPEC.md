@@ -67,6 +67,14 @@ Fetches RSS feeds and returns recent items, newest first, deduplicated by URL.
   of the list and marked in the prompt, so the governing body leads whenever it
   has news. Ordering carries the preference — a prompt instruction alone loses
   to a livelier aggregator story sitting higher in the list.
+- **Source diversity.** After that, items are round-robined across publishers:
+  one from each before any source contributes a second. A plain recency sort
+  hands the whole list to whoever posts most often — 220 Triathlon files
+  several stories a day where most sources file one, so nine of its items sat
+  above everything else and the model, which only ever sees the first dozen,
+  had nothing else to choose from. Every feed was reachable; the selection was
+  the bug. Recency is preserved within each source, so each publisher still
+  leads with its newest story.
 - **No repeats, ever.** A ledger of posted URLs (`posted.json` on gh-pages) is
   loaded before fetching and applied *inside* the widening loop. The window
   overlaps by design, so most days the 36h result is largely yesterday's

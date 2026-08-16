@@ -133,19 +133,53 @@ def is_governing_body(item: "NewsItem") -> bool:
     return any(name in item.source.lower() for name in GOVERNING_BODY_NAMES)
 
 
-def prioritize(items: list["NewsItem"]) -> list["NewsItem"]:
-    """Float World Triathlon items to the front, preserving recency within groups.
+def diversify(items: list["NewsItem"]) -> list["NewsItem"]:
+    """Round-robin across sources: one item each before any source repeats.
 
-    The model reads this list in order and is told the first entries are the
-    governing body, so ordering is how the preference is actually expressed —
-    a prompt instruction alone would be ignored whenever a livelier aggregator
-    story appeared higher up.
+    Straight recency ordering hands the whole list to whichever publisher posts
+    most often. 220 Triathlon files several stories a day while most sources
+    file one, so a recency sort put nine 220 items above everything else and
+    the model — which only ever sees the first dozen — had nothing else to
+    choose from. Every feed was working; the selection was the problem.
+
+    Recency is preserved *within* each source, so each publisher still leads
+    with its newest story.
+    """
+    by_source: dict[str, list] = {}
+    for item in items:
+        by_source.setdefault(item.source, []).append(item)
+
+    ordered: list = []
+    while by_source:
+        for source in list(by_source):
+            ordered.append(by_source[source].pop(0))
+            if not by_source[source]:
+                del by_source[source]
+    return ordered
+
+
+def prioritize(items: list["NewsItem"]) -> list["NewsItem"]:
+    """Order items for selection: governing body first, then source-balanced.
+
+    The model reads this list in order and only sees the first dozen, so
+    ordering *is* the selection policy — a prompt instruction alone loses to
+    whatever happens to sit higher in the list.
     """
     governing = [i for i in items if is_governing_body(i)]
     rest = [i for i in items if not is_governing_body(i)]
     if governing:
         log.info("%d governing-body item(s) prioritized", len(governing))
-    return governing + rest
+
+    ordered = diversify(governing) + diversify(rest)
+    if ordered:
+        seen: dict[str, int] = {}
+        for i in ordered[:12]:
+            seen[i.source] = seen.get(i.source, 0) + 1
+        log.info(
+            "top 12 by source: %s",
+            ", ".join(f"{k} x{v}" for k, v in sorted(seen.items())),
+        )
+    return ordered
 
 
 def fetch_recent(
@@ -193,6 +227,16 @@ def fetch_recent(
             )
 
     items.sort(key=lambda i: i.published, reverse=True)
+    # Per-source counts make an imbalance visible in the log rather than only
+    # in the finished post.
+    if items:
+        counts: dict[str, int] = {}
+        for i in items:
+            counts[i.source] = counts.get(i.source, 0) + 1
+        log.info(
+            "items per source: %s",
+            ", ".join(f"{k} x{v}" for k, v in sorted(counts.items())),
+        )
     log.info(
         "fetched %d items; %d/%d feeds reachable (window %.0fh)",
         len(items),
