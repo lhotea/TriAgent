@@ -67,6 +67,13 @@ Fetches RSS feeds and returns recent items, newest first, deduplicated by URL.
   of the list and marked in the prompt, so the governing body leads whenever it
   has news. Ordering carries the preference — a prompt instruction alone loses
   to a livelier aggregator story sitting higher in the list.
+- **No repeats, ever.** A ledger of posted URLs (`posted.json` on gh-pages) is
+  loaded before fetching and applied *inside* the widening loop. The window
+  overlaps by design, so most days the 36h result is largely yesterday's
+  stories; widening is precisely the right response to "everything recent has
+  been used", and only the loop can do it. Filtering before the model also
+  matters — removing a repeat afterwards would discard a brief already built
+  around it.
 - **Per-feed isolation.** A feed that 404s, times out, or fails DNS is logged
   and skipped. The run continues on whatever is left.
 - **Entity decoding.** Feeds deliver typographic punctuation as numeric
@@ -330,6 +337,21 @@ Metric availability varies by media type, account and creation date — Meta
 retired `impressions` and `plays` for newer posts — and one unsupported metric
 fails the whole call, so the request degrades to a core set. Nothing here
 raises: losing a day of numbers must not affect posting.
+
+---
+
+### Stage 9 — Story history (`history.py`)
+
+Stories are marked used **only after a post is live**. Build writes a pending
+list; a successful publish commits it. Marking at build time would burn stories
+whenever publishing failed later in the run — and publishing has failed for
+image hosting, credentials and API quirks over this project's life.
+
+A corrupt or missing ledger degrades to empty rather than raising: the cost of
+losing it is a possible repeat, the cost of raising is no post at all.
+
+The ledger is unbounded, which is deliberate. "Never repeat" means never, and
+at roughly five URLs a day a decade of history is still a small file.
 
 ---
 

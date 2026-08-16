@@ -210,25 +210,43 @@ def fetch_recent_widening(
     *,
     windows: tuple[float, ...] = (36, 96, 240),
     per_feed_limit: int = 10,
+    exclude: set[str] | None = None,
+    min_items: int = 1,
 ) -> list[NewsItem]:
-    """Fetch with progressively wider time windows until something turns up.
+    """Fetch with progressively wider windows until enough usable items appear.
 
     A quiet news day, a publisher pausing, or a couple of dead feeds shouldn't
     take the whole run down — a slightly older story beats no post at all. The
-    windows are tried in order and the first non-empty result wins, so normal
+    windows are tried in order and the first sufficient result wins, so normal
     days still get same-day news.
+
+    `exclude` holds URLs already posted. Filtering happens inside the loop, not
+    after it: the fetch window overlaps by design, so on most days the 36h
+    result is mostly yesterday's stories. Widening is exactly the right
+    response to "everything recent has been used", and only the loop can do it.
     """
+    exclude = exclude or set()
     for window in windows:
         items = fetch_recent(
             feed_urls, max_age_hours=window, per_feed_limit=per_feed_limit
         )
-        if items:
+        fresh = [i for i in items if i.url not in exclude]
+        if len(fresh) < len(items):
+            log.info(
+                "%d of %d items already posted (window %.0fh)",
+                len(items) - len(fresh),
+                len(items),
+                window,
+            )
+        if len(fresh) >= min_items:
             if window != windows[0]:
                 log.warning(
-                    "no items within %.0fh; widened to %.0fh and found %d",
-                    windows[0],
-                    window,
-                    len(items),
+                    "widened to %.0fh to find %d unused item(s)", window, len(fresh)
                 )
-            return items
+            return fresh
+    log.error(
+        "only found fewer than %d unused item(s) even at %.0fh",
+        min_items,
+        windows[-1],
+    )
     return []

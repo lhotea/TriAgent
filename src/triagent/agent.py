@@ -16,6 +16,7 @@ from .image import (
 )
 from .imagery import resolve_background
 from .monetization import assemble_caption
+from .history import commit_pending, load_used, write_pending
 from .news import fetch_recent_widening, prioritize
 from .publisher import InstagramPublisher
 from .review import render_review_page
@@ -28,6 +29,9 @@ log = logging.getLogger(__name__)
 BACKGROUNDS_DIR = ASSETS_DIR / "backgrounds"
 # Drop licensed audio here; empty means a silent Reel.
 MUSIC_DIR = ASSETS_DIR / "music"
+# Ledger of stories already posted, and the not-yet-published candidates.
+HISTORY_PATH = ASSETS_DIR / "posted.json"
+PENDING_PATH = ASSETS_DIR / "pending.json"
 
 
 @dataclass
@@ -145,11 +149,24 @@ def build(settings: Settings) -> RunResult:
     settings.require_build_config()
     assert settings.anthropic_api_key  # checked immediately above
 
-    items = fetch_recent_widening(settings.feeds, per_feed_limit=10)
+    # A story is never posted twice. The window overlaps by design, so without
+    # this the strongest item simply repeats until it ages out.
+    used = load_used(HISTORY_PATH)
+    if used:
+        log.info("%d story url(s) already posted", len(used))
+
+    items = fetch_recent_widening(
+        settings.feeds,
+        per_feed_limit=10,
+        exclude=set(used),
+        # The brief needs three headlines, so anything less cannot produce a post.
+        min_items=3,
+    )
     if not items:
         raise RuntimeError(
-            "no triathlon news found in any time window — every feed is likely "
-            "unreachable. Run `python -m triagent --mode feedcheck` to see which."
+            "no unused triathlon news found in any time window. Either the feeds "
+            "are unreachable (run `--mode feedcheck`) or everything recent has "
+            "already been posted — add more feeds to widen the pool."
         )
 
     top_items = prioritize(items)[: max(settings.max_headlines * 2, 12)]
@@ -219,6 +236,11 @@ def build(settings: Settings) -> RunResult:
     caption_path = settings.image_path.with_name("caption.txt")
     caption_path.write_text(caption, encoding="utf-8")
 
+    # Pending, not committed: publishing can still fail, and burning stories on
+    # a run that never posted would quietly shrink the pool for nothing.
+    used_urls = {h.source_url for h in brief.headlines if h.source_url}
+    write_pending(PENDING_PATH, [i for i in top_items if i.url in used_urls])
+
     # Dated copies are what actually get published; the undated names stay for
     # artifacts and local inspection.
     dated_png = settings.image_path.with_name(dated_name("daily", ".png"))
@@ -272,6 +294,8 @@ def publish_from_build(settings: Settings) -> RunResult:
     image_url = _image_url(settings)
 
     media_id = _do_publish(settings, image_url, caption)
+    # The post is live, so those stories are now spent.
+    commit_pending(HISTORY_PATH, PENDING_PATH)
     return RunResult(brief=None, caption=caption, image_url=image_url, media_id=media_id)
 
 
@@ -289,6 +313,7 @@ def run(settings: Settings, *, dry_run: bool = False) -> RunResult:
     settings.require_publish_config()
 
     media_id = _do_publish(settings, result.image_url, result.caption)
+    commit_pending(HISTORY_PATH, PENDING_PATH)
     return RunResult(
         brief=result.brief,
         caption=result.caption,

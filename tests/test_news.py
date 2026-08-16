@@ -255,6 +255,13 @@ class TestFetchRecent:
         assert items == []
 
 
+class _Stub:
+    """Minimal stand-in for a NewsItem — the widening path only reads .url."""
+
+    def __init__(self, url):
+        self.url = url
+
+
 class TestWideningFetch:
     """Tests for fetch_recent_widening — resilience when news is sparse."""
 
@@ -262,10 +269,11 @@ class TestWideningFetch:
         from triagent.news import fetch_recent_widening
 
         with patch("triagent.news.fetch_recent") as mock_fetch:
-            mock_fetch.side_effect = [[], [], ["item"]]
+            item = _Stub("https://e.com/1")
+            mock_fetch.side_effect = [[], [], [item]]
             out = fetch_recent_widening(["u"], windows=(36, 96, 240))
 
-        assert out == ["item"]
+        assert out == [item]
         assert mock_fetch.call_count == 3
 
     def test_stops_at_first_non_empty_window(self):
@@ -273,10 +281,11 @@ class TestWideningFetch:
         from triagent.news import fetch_recent_widening
 
         with patch("triagent.news.fetch_recent") as mock_fetch:
-            mock_fetch.side_effect = [["fresh"], ["older"]]
+            fresh, older = _Stub("https://e.com/f"), _Stub("https://e.com/o")
+            mock_fetch.side_effect = [[fresh], [older]]
             out = fetch_recent_widening(["u"], windows=(36, 96))
 
-        assert out == ["fresh"]
+        assert out == [fresh]
         assert mock_fetch.call_count == 1
 
     def test_returns_empty_when_all_windows_dry(self):
@@ -289,7 +298,7 @@ class TestWideningFetch:
         from triagent.news import fetch_recent_widening
 
         with patch("triagent.news.fetch_recent") as mock_fetch:
-            mock_fetch.side_effect = [[], ["x"]]
+            mock_fetch.side_effect = [[], [_Stub("https://e.com/x")]]
             fetch_recent_widening(["u"], windows=(12, 48))
 
         assert mock_fetch.call_args_list[0].kwargs["max_age_hours"] == 12
@@ -469,3 +478,51 @@ class TestEntityDecoding:
         from triagent.news import _clean
 
         assert _clean("a&nbsp;b") == "a b"
+
+
+class TestExcludeAlreadyPosted:
+    """The fetch window overlaps by design, so filtering must happen inside
+    the widening loop — widening is the correct response to 'everything
+    recent has already been used'."""
+
+    def _item(self, url):
+        from triagent.news import NewsItem
+        import datetime as _dt
+
+        return NewsItem("t", "s", url, "src", _dt.datetime.now(_dt.timezone.utc))
+
+    def test_excluded_urls_are_dropped(self):
+        from triagent.news import fetch_recent_widening
+
+        with patch("triagent.news.fetch_recent", return_value=[
+            self._item("https://a"), self._item("https://b")
+        ]):
+            out = fetch_recent_widening(["f"], exclude={"https://a"})
+        assert [i.url for i in out] == ["https://b"]
+
+    def test_widens_when_recent_items_are_all_used(self):
+        from triagent.news import fetch_recent_widening
+
+        narrow = [self._item("https://used")]
+        wide = [self._item("https://used"), self._item("https://fresh")]
+        with patch("triagent.news.fetch_recent", side_effect=[narrow, wide]) as f:
+            out = fetch_recent_widening(
+                ["f"], windows=(36, 96), exclude={"https://used"}, min_items=1
+            )
+        assert [i.url for i in out] == ["https://fresh"]
+        assert f.call_count == 2
+
+    def test_respects_min_items(self):
+        """One unused item cannot make a brief that needs three headlines."""
+        from triagent.news import fetch_recent_widening
+
+        one = [self._item("https://a")]
+        with patch("triagent.news.fetch_recent", return_value=one):
+            assert fetch_recent_widening(["f"], min_items=3) == []
+
+    def test_returns_empty_when_everything_is_used(self):
+        from triagent.news import fetch_recent_widening
+
+        items = [self._item("https://a")]
+        with patch("triagent.news.fetch_recent", return_value=items):
+            assert fetch_recent_widening(["f"], exclude={"https://a"}) == []

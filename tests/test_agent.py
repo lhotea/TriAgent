@@ -37,7 +37,7 @@ class TestBuild:
         """build() raises RuntimeError when no news items are found."""
         with (
             patch("triagent.agent.fetch_recent_widening", return_value=[]),
-            pytest.raises(RuntimeError, match="no triathlon news found"),
+            pytest.raises(RuntimeError, match="no unused triathlon news"),
         ):
             build(mock_settings)
 

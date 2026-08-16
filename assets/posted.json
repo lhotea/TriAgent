@@ -1,0 +1,17 @@
+{
+  "https://example.com/1": {
+    "title": "Story 1",
+    "source": "Test",
+    "first_used": "2026-08-16"
+  },
+  "https://example.com/2": {
+    "title": "Story 2",
+    "source": "Test",
+    "first_used": "2026-08-16"
+  },
+  "https://example.com/3": {
+    "title": "Story 3",
+    "source": "Test",
+    "first_used": "2026-08-16"
+  }
+}

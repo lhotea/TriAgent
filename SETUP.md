@@ -246,6 +246,24 @@ shape is used, so surrounding artwork is ignored.
 
 ---
 
+## 7a. Story history
+
+Runs automatically. A story is never posted twice: `posted.json` on gh-pages
+records every URL used, and the fetch skips them.
+
+You may see the log widen the window — "widened to 96h to find 8 unused
+item(s)" — which is the system working. The 36h window overlaps by design, so
+on a slow news day most of what it finds has already been posted.
+
+If a run fails with *"no unused triathlon news found in any time window"*, the
+pool has run dry: add more feeds. That message means the agent refused to
+repeat itself rather than silently reposting.
+
+To deliberately allow a story again, delete its entry from `posted.json` on the
+`gh-pages` branch.
+
+---
+
 ## 7b. Performance tracking
 
 Runs automatically — no setup beyond the Instagram credentials you already
