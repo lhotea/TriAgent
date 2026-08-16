@@ -134,10 +134,16 @@ jobs:
         run: |
           set -euo pipefail
           test -f assets/posted.json || { echo "nothing committed"; exit 0; }
-          git fetch origin gh-pages || true
-          git worktree add -B gh-pages gh-pages-hist origin/gh-pages
-          cp assets/posted.json gh-pages-hist/posted.json
-          cd gh-pages-hist
+          # Reuse the worktree the publish step created. Git refuses to check
+          # the same branch out into two worktrees, so adding a second one here
+          # fails with exit 128 — which is exactly what happened on run #133:
+          # the post went out and the history was never recorded.
+          if [ ! -d gh-pages-wt ]; then
+            git fetch origin gh-pages || true
+            git worktree add -B gh-pages gh-pages-wt origin/gh-pages
+          fi
+          cp assets/posted.json gh-pages-wt/posted.json
+          cd gh-pages-wt
           git config user.email "actions@github.com"
           git config user.name "TriAgent Bot"
           git add posted.json
