@@ -59,10 +59,24 @@ jobs:
           set -euo pipefail
           mkdir -p assets
           git fetch origin gh-pages || true
-          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git show origin/gh-pages:posted.json > assets/posted.json 2>/dev/null \
-              || echo "no history yet — first run"
+          if ! git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            echo "gh-pages does not exist yet — no history to fetch"
+            exit 0
           fi
+          if ! git cat-file -e origin/gh-pages:posted.json 2>/dev/null; then
+            echo "gh-pages carries no posted.json yet — starting from empty"
+            exit 0
+          fi
+          # Stage to a temp file first. Redirecting straight into the target
+          # creates it *before* git runs, so a failed show left a 0-byte ledger
+          # that reads as "nothing posted yet" — indistinguishable from a real
+          # first run, and it repeats every story without anything looking wrong.
+          git show origin/gh-pages:posted.json > "$RUNNER_TEMP/posted.json"
+          # Fail loudly on a corrupt ledger rather than silently posting repeats.
+          # A missed day is recoverable; an unnoticed stream of duplicates is
+          # what this whole mechanism exists to prevent.
+          python -c "import json,os; d=json.load(open(os.environ['RUNNER_TEMP']+'/posted.json')); print(f'{len(d)} story url(s) already posted')"
+          mv "$RUNNER_TEMP/posted.json" assets/posted.json
 
       - name: Build card + caption
         env:
@@ -150,6 +164,33 @@ jobs:
           git commit -m "history: $(date -u +%F)" || echo "no changes"
           git push origin gh-pages
 
+      # The seam between Python and YAML has now broken three times: run #125
+      # (dated files never copied), run #133 (worktree collision), and the
+      # duplicate posts of 15–17 Aug, where the ledger was never written at all
+      # and every step still reported success. The test suite cannot see across
+      # this boundary, so assert the end state on the remote instead of trusting
+      # that a sequence of green steps produced it.
+      - name: Verify the ledger landed on gh-pages
+        if: ${{ !inputs.dry_run && success() }}
+        run: |
+          set -euo pipefail
+          test -f assets/pending.json || { echo "no stories were selected"; exit 0; }
+          git fetch origin gh-pages
+          git show origin/gh-pages:posted.json > "$RUNNER_TEMP/remote-posted.json"
+          python - <<'PY'
+          import json, os, sys
+
+          pending = json.load(open("assets/pending.json"))
+          remote = json.load(open(os.environ["RUNNER_TEMP"] + "/remote-posted.json"))
+          missing = [u for u in pending if u not in remote]
+          if missing:
+              sys.exit(
+                  "ledger did not land on gh-pages — these would be posted again "
+                  "tomorrow:\n  " + "\n  ".join(missing)
+              )
+          print(f"verified {len(pending)} story url(s) recorded; {len(remote)} in ledger")
+          PY
+
       - name: Upload rendered card
         if: always()
         uses: actions/upload-artifact@v4
@@ -161,4 +202,5 @@ jobs:
             assets/index.html
             assets/daily.mp4
             assets/posted.json
+            assets/pending.json
           if-no-files-found: ignore

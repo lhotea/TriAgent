@@ -76,12 +76,23 @@ Fetches RSS feeds and returns recent items, newest first, deduplicated by URL.
   the bug. Recency is preserved within each source, so each publisher still
   leads with its newest story.
 - **No repeats, ever.** A ledger of posted URLs (`posted.json` on gh-pages) is
-  loaded before fetching and applied *inside* the widening loop. The window
+  loaded before fetching and handed down into `fetch_recent` itself. The window
   overlaps by design, so most days the 36h result is largely yesterday's
   stories; widening is precisely the right response to "everything recent has
-  been used", and only the loop can do it. Filtering before the model also
-  matters — removing a repeat afterwards would discard a brief already built
-  around it.
+  been used". Filtering before the model also matters — removing a repeat
+  afterwards would discard a brief already built around it.
+- **The per-feed cap counts what a feed contributes, not how far down it we
+  look.** Slicing the raw entry list before the age and ledger filters made
+  widening inert: entry 11 was unreachable at any window, so once a busy feed's
+  ten newest stories were all in the ledger that feed was permanently dry and
+  the run would fail with "no unused triathlon news found in any time window".
+  220 Triathlon supplies most of the real pool, so this was days away rather
+  than hypothetical. The cap now applies after filtering, which is what makes
+  the widening fallback actually reach deeper.
+- **Silent feeds are named in the log.** A feed that parses but yields nothing
+  is otherwise invisible: production reported "13/14 feeds reachable" while two
+  sources supplied every story and the other eleven contributed zero. Naming
+  them is what turns a stale `FEEDS` entry into something fixable.
 - **Per-feed isolation.** A feed that 404s, times out, or fails DNS is logged
   and skipped. The run continues on whatever is left.
 - **Entity decoding.** Feeds deliver typographic punctuation as numeric
@@ -355,11 +366,31 @@ list; a successful publish commits it. Marking at build time would burn stories
 whenever publishing failed later in the run — and publishing has failed for
 image hosting, credentials and API quirks over this project's life.
 
-A corrupt or missing ledger degrades to empty rather than raising: the cost of
-losing it is a possible repeat, the cost of raising is no post at all.
-
 The ledger is unbounded, which is deliberate. "Never repeat" means never, and
 at roughly five URLs a day a decade of history is still a small file.
+
+**The ledger only works if it survives the run**, and for three days it did
+not. Posts on 15–17 August repeated because `posted.json` never reached
+gh-pages: the ledger shipped after the 15th, the 16th's write died on a
+worktree collision, and the 17th therefore started from an empty ledger and
+filtered nothing. Every step reported success throughout. Two guards close
+that gap:
+
+- The fetch stages to a temp file and moves it into place only on success.
+  Redirecting straight into the target created the file *before* `git show`
+  ran, so a failure left a 0-byte ledger — indistinguishable from a genuine
+  first run, and it repeats every story with nothing looking wrong. A ledger
+  that exists but will not parse now fails the run loudly; a missed day is
+  recoverable, an unnoticed stream of duplicates is what this mechanism exists
+  to prevent. (`load_used` still degrades to empty, which is the right
+  behaviour for the library — the workflow is where the distinction between
+  "absent" and "broken" can actually be made.)
+- A post-publish step re-fetches gh-pages and asserts every pending URL is
+  present in the remote ledger, naming any that would repeat tomorrow. The
+  test suite cannot see across the Python/YAML seam, and that seam has now
+  broken three times — dated files never copied (run #125), the worktree
+  collision (run #133), and this. Asserting the end state on the remote is
+  the only check that spans it.
 
 ---
 

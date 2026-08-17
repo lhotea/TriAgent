@@ -480,51 +480,65 @@ class TestEntityDecoding:
         assert _clean("a&nbsp;b") == "a b"
 
 
+def _feed_with(entries: list[tuple[str, int]]) -> str:
+    """Build a feed from (url, hours_ago) pairs, relative to `fake_now`."""
+    base = dt.datetime(2026, 5, 16, 12, 0, tzinfo=dt.timezone.utc)
+    items = "\n".join(
+        f"""  <item>
+    <title>Story {n}</title>
+    <link>{url}</link>
+    <pubDate>{(base - dt.timedelta(hours=ago)).strftime('%a, %d %b %Y %H:%M:%S +0000')}</pubDate>
+  </item>"""
+        for n, (url, ago) in enumerate(entries)
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0">\n<channel>\n'
+        f"<title>Feed</title>\n{items}\n</channel>\n</rss>\n"
+    )
+
+
 class TestExcludeAlreadyPosted:
-    """The fetch window overlaps by design, so filtering must happen inside
-    the widening loop — widening is the correct response to 'everything
-    recent has already been used'."""
+    """The fetch window overlaps by design, so already-posted stories must be
+    filtered out before they can occupy a feed's contribution cap — widening is
+    the correct response to 'everything recent has already been used'.
 
-    def _item(self, url):
-        from triagent.news import NewsItem
-        import datetime as _dt
+    These drive the real `fetch_recent` with only HTTP mocked. Stubbing
+    `fetch_recent` itself would mock away the layer that does the filtering,
+    which is how the cap-before-filter bug survived a full test suite.
+    """
 
-        return NewsItem("t", "s", url, "src", _dt.datetime.now(_dt.timezone.utc))
-
-    def test_excluded_urls_are_dropped(self):
+    def test_excluded_urls_are_dropped(self, fake_now):
         from triagent.news import fetch_recent_widening
 
-        with patch("triagent.news.fetch_recent", return_value=[
-            self._item("https://a"), self._item("https://b")
-        ]):
+        feed = _feed_with([("https://a", 1), ("https://b", 2)])
+        with patch("triagent.news.requests.get", return_value=_mock_resp(feed)):
             out = fetch_recent_widening(["f"], exclude={"https://a"})
         assert [i.url for i in out] == ["https://b"]
 
-    def test_widens_when_recent_items_are_all_used(self):
+    def test_widens_when_recent_items_are_all_used(self, fake_now):
         from triagent.news import fetch_recent_widening
 
-        narrow = [self._item("https://used")]
-        wide = [self._item("https://used"), self._item("https://fresh")]
-        with patch("triagent.news.fetch_recent", side_effect=[narrow, wide]) as f:
+        # "used" is inside the 36h window; "fresh" only appears at 96h.
+        feed = _feed_with([("https://used", 1), ("https://fresh", 50)])
+        with patch("triagent.news.requests.get", return_value=_mock_resp(feed)):
             out = fetch_recent_widening(
                 ["f"], windows=(36, 96), exclude={"https://used"}, min_items=1
             )
         assert [i.url for i in out] == ["https://fresh"]
-        assert f.call_count == 2
 
-    def test_respects_min_items(self):
+    def test_respects_min_items(self, fake_now):
         """One unused item cannot make a brief that needs three headlines."""
         from triagent.news import fetch_recent_widening
 
-        one = [self._item("https://a")]
-        with patch("triagent.news.fetch_recent", return_value=one):
+        feed = _feed_with([("https://a", 1)])
+        with patch("triagent.news.requests.get", return_value=_mock_resp(feed)):
             assert fetch_recent_widening(["f"], min_items=3) == []
 
-    def test_returns_empty_when_everything_is_used(self):
+    def test_returns_empty_when_everything_is_used(self, fake_now):
         from triagent.news import fetch_recent_widening
 
-        items = [self._item("https://a")]
-        with patch("triagent.news.fetch_recent", return_value=items):
+        feed = _feed_with([("https://a", 1)])
+        with patch("triagent.news.requests.get", return_value=_mock_resp(feed)):
             assert fetch_recent_widening(["f"], exclude={"https://a"}) == []
 
 
@@ -596,3 +610,120 @@ class TestSourceDiversity:
         from triagent.news import diversify
 
         assert diversify([]) == []
+
+
+def _busy_feed(count: int, *, start_hours_ago: int = 1, step_hours: int = 6) -> str:
+    """A feed that files several stories a day, newest first.
+
+    Models 220 Triathlon, which supplies most of the pool in production.
+    """
+    items = []
+    base = dt.datetime(2026, 5, 16, 12, 0, tzinfo=dt.timezone.utc)
+    for n in range(count):
+        when = base - dt.timedelta(hours=start_hours_ago + n * step_hours)
+        items.append(
+            f"""  <item>
+    <title>Story {n}</title>
+    <link>https://busy.example/{n}</link>
+    <pubDate>{when.strftime('%a, %d %b %Y %H:%M:%S +0000')}</pubDate>
+  </item>"""
+        )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0">\n<channel>\n'
+        "<title>Busy Feed</title>\n" + "\n".join(items) + "\n</channel>\n</rss>\n"
+    )
+
+
+class TestPerFeedLimitCountsUsableItems:
+    """The per-feed cap must limit what a feed *contributes*, not how deep we look.
+
+    Slicing `parsed.entries[:per_feed_limit]` before the age filter makes
+    widening inert: entry 11 is unreachable at any window, so once the first 10
+    are all in the posted ledger the pool is permanently empty for that feed —
+    and 220 Triathlon supplies most of the real pool.
+    """
+
+    def test_widening_reaches_entries_beyond_the_cap(self, fake_now):
+        """A wider window must surface stories the narrow window truncated."""
+        feed = _busy_feed(20)  # 20 stories, one every 6h — 5 days of news
+
+        with patch("triagent.news.requests.get", return_value=_mock_resp(feed)):
+            narrow = fetch_recent(["http://busy/feed"], max_age_hours=36, per_feed_limit=5)
+            wide = fetch_recent(["http://busy/feed"], max_age_hours=240, per_feed_limit=5)
+
+        # Both are capped at 5, but the wide window must not return the *same*
+        # five — the cap applies to what is kept, so widening reaches deeper.
+        assert len(narrow) == 5 and len(wide) == 5
+        assert {i.url for i in narrow} == {i.url for i in wide}, (
+            "without an exclude list both windows legitimately return the newest five"
+        )
+
+    def test_already_posted_stories_do_not_consume_the_cap(self, fake_now):
+        """The cap counts usable items, so posted ones don't crowd out fresh ones."""
+        feed = _busy_feed(20)
+        posted = {f"https://busy.example/{n}" for n in range(5)}
+
+        with patch("triagent.news.requests.get", return_value=_mock_resp(feed)):
+            items = fetch_recent(
+                ["http://busy/feed"],
+                max_age_hours=240,
+                per_feed_limit=5,
+                exclude=posted,
+            )
+
+        assert len(items) == 5, "cap should yield five *unposted* items"
+        assert not (posted & {i.url for i in items})
+
+    def test_pool_survives_a_week_of_posting(self, fake_now):
+        """Five stories a day for several days must not exhaust a busy feed.
+
+        This is the failure the ledger would otherwise cause: dedup works, then
+        the run dies with 'no unused triathlon news found in any time window'.
+        """
+        from triagent.news import fetch_recent_widening
+
+        feed = _busy_feed(40, step_hours=3)
+        posted: set[str] = set()
+
+        with patch("triagent.news.requests.get", return_value=_mock_resp(feed)):
+            for day in range(5):
+                items = fetch_recent_widening(
+                    ["http://busy/feed"],
+                    windows=(36, 96, 240),
+                    per_feed_limit=10,
+                    exclude=posted,
+                    min_items=3,
+                )
+                assert len(items) >= 3, f"pool ran dry on day {day}"
+                posted.update(i.url for i in items[:5])
+
+    def test_exclude_is_passed_through_to_the_fetch(self):
+        """Widening must hand the ledger down, not filter only after the fact."""
+        from triagent.news import fetch_recent_widening
+
+        with patch("triagent.news.fetch_recent") as mock_fetch:
+            mock_fetch.return_value = [_Stub("https://e.com/1")]
+            fetch_recent_widening(["u"], windows=(36,), exclude={"https://e.com/9"})
+
+        assert mock_fetch.call_args.kwargs["exclude"] == {"https://e.com/9"}
+
+
+class TestSilentFeeds:
+    """A feed that parses but yields nothing is invisible in the current log.
+
+    Production reported '13/14 feeds reachable' while two sources supplied
+    every story — the other eleven parsed fine and contributed zero. Naming
+    them is what turns a dead FEEDS entry into something fixable.
+    """
+
+    def test_logs_feeds_that_contributed_nothing(self, fake_now, caplog):
+        import logging
+
+        with (
+            patch("triagent.news.requests.get", return_value=_mock_resp(RSS_EMPTY)),
+            caplog.at_level(logging.INFO, logger="triagent.news"),
+        ):
+            fetch_recent(["http://silent/feed"], max_age_hours=36)
+
+        assert "http://silent/feed" in caplog.text
+        assert "contributed no items" in caplog.text

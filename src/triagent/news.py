@@ -187,11 +187,24 @@ def fetch_recent(
     *,
     max_age_hours: float = 36,
     per_feed_limit: int = 10,
+    exclude: set[str] | None = None,
 ) -> list[NewsItem]:
+    """Collect usable items from every feed, newest first.
+
+    `per_feed_limit` caps what each feed *contributes*, counted after the age
+    and `exclude` filters — not how far down the feed we look. Slicing the raw
+    entry list first made the widening fallback inert: entry 11 was unreachable
+    at any window, so once a busy feed's ten newest stories were all in the
+    posted ledger, that feed was permanently dry and the run failed with "no
+    unused triathlon news found in any time window". 220 Triathlon supplies
+    most of the real pool, so that was days away rather than hypothetical.
+    """
+    exclude = exclude or set()
     now = dt.datetime.now(dt.timezone.utc)
     items: list[NewsItem] = []
     seen_urls: set[str] = set()
     live_feeds = 0
+    silent_feeds: list[str] = []
 
     for feed_url in feed_urls:
         try:
@@ -203,9 +216,12 @@ def fetch_recent(
 
         # Feed titles carry entities too ("220 Triathlon &amp; Multisport").
         source = _clean(parsed.feed.get("title", "")) or feed_url
-        for entry in parsed.entries[:per_feed_limit]:
+        kept = 0
+        for entry in parsed.entries:
+            if kept >= per_feed_limit:
+                break
             url = entry.get("link")
-            if not url or url in seen_urls:
+            if not url or url in seen_urls or url in exclude:
                 continue
             published = _parse_dt(entry)
             if (now - published).total_seconds() / 3600 > max_age_hours:
@@ -216,6 +232,7 @@ def fetch_recent(
             if not title:
                 continue
             seen_urls.add(url)
+            kept += 1
             items.append(
                 NewsItem(
                     title=title,
@@ -225,8 +242,20 @@ def fetch_recent(
                     published=published,
                 )
             )
+        if kept == 0:
+            silent_feeds.append(feed_url)
 
     items.sort(key=lambda i: i.published, reverse=True)
+    # A feed that parses but yields nothing is otherwise invisible: production
+    # logged "13/14 feeds reachable" while two sources supplied every story.
+    # Naming the silent ones is what makes a stale FEEDS entry fixable.
+    if silent_feeds:
+        log.info(
+            "%d feed(s) contributed no items (window %.0fh): %s",
+            len(silent_feeds),
+            max_age_hours,
+            ", ".join(silent_feeds),
+        )
     # Per-source counts make an imbalance visible in the log rather than only
     # in the finished post.
     if items:
@@ -264,24 +293,22 @@ def fetch_recent_widening(
     windows are tried in order and the first sufficient result wins, so normal
     days still get same-day news.
 
-    `exclude` holds URLs already posted. Filtering happens inside the loop, not
-    after it: the fetch window overlaps by design, so on most days the 36h
-    result is mostly yesterday's stories. Widening is exactly the right
+    `exclude` holds URLs already posted. It is handed down to `fetch_recent`
+    rather than applied to its result, so posted stories never consume a feed's
+    contribution cap — filtering afterwards would leave a busy feed returning
+    the same ten already-used items at every window, and widening would find
+    nothing to widen into. The window overlaps by design, so on most days the
+    36h result is mostly yesterday's stories; widening is exactly the right
     response to "everything recent has been used", and only the loop can do it.
     """
     exclude = exclude or set()
     for window in windows:
-        items = fetch_recent(
-            feed_urls, max_age_hours=window, per_feed_limit=per_feed_limit
+        fresh = fetch_recent(
+            feed_urls,
+            max_age_hours=window,
+            per_feed_limit=per_feed_limit,
+            exclude=exclude,
         )
-        fresh = [i for i in items if i.url not in exclude]
-        if len(fresh) < len(items):
-            log.info(
-                "%d of %d items already posted (window %.0fh)",
-                len(items) - len(fresh),
-                len(items),
-                window,
-            )
         if len(fresh) >= min_items:
             if window != windows[0]:
                 log.warning(

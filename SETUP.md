@@ -265,8 +265,30 @@ If a run fails with *"no unused triathlon news found in any time window"*, the
 pool has run dry: add more feeds. That message means the agent refused to
 repeat itself rather than silently reposting.
 
+If a run fails on **"ledger did not land on gh-pages"**, the post went out but
+the stories behind it were not recorded — so tomorrow would repeat them. The
+step names the URLs. Fix it by adding them to `posted.json` on `gh-pages`, or
+just re-run the workflow, which will record them on the next successful post.
+This check exists because exactly that failure went unnoticed for three days
+and produced three duplicate posts.
+
 To deliberately allow a story again, delete its entry from `posted.json` on the
 `gh-pages` branch.
+
+### If posts still look repetitive
+
+Check the build log for the line naming feeds that contributed nothing:
+
+```
+11 feed(s) contributed no items (window 36h): https://…/feed, …
+```
+
+A feed listed there parses but has no recent stories — either it is a
+low-frequency blog, or the URL points at an HTML page rather than a feed. In
+the current `FEEDS` list only two sources supply stories on a typical day, so
+the pool is thin and the same publisher dominates. Replacing the silent entries
+with higher-volume feeds is what actually broadens the posts; the dedup ledger
+can only stop repeats, it cannot invent variety.
 
 ---
 
