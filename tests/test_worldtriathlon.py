@@ -488,3 +488,309 @@ class TestApicheckExitCodes:
 
     def test_an_unreachable_endpoint_is_a_failure(self):
         assert self._run({"url": "u", "authenticated": False, "error": "boom"}) == 1
+
+
+# --- Event-discovery flow -------------------------------------------------
+#
+# `api.triathlon.org/v1/news` (the first guess) turned out to 404, and
+# research into World Triathlon's own docs explains why: there is no flat
+# "all news" endpoint. News is only exposed scoped to an event
+# (`/v1/events/{id}/news`) or a federation (whose `latest_news` reportedly
+# returns null since a 2020s CMS migration). The confirmed field names from
+# World Triathlon's own examples — entry_id, title, slug, entry_date, excerpt
+# — match what to_feed() already expects, which is why these tests reuse them
+# rather than inventing a new shape.
+#
+# Rather than hardcode one event_id (which goes stale the moment that event's
+# news cycle ends), fetch_api asks the confirmed `/v1/events` listing for
+# what is happening in a rolling window around today, then merges each
+# event's own news. That is the "event-scoped, but not manually rotated"
+# design.
+
+EVENTS_PAGE = {
+    "data": [
+        {"event_id": 8001, "event_title": "2026 WTCS Hamburg"},
+        {"event_id": 8002, "event_title": "2026 World Cup Karlovy Vary"},
+    ]
+}
+
+EVENT_NEWS_8001 = [
+    {
+        "entry_id": 100552, "title": "Hamburg preview: the contenders",
+        "slug": "hamburg-preview-the-contenders", "entry_date": "2026-08-19 09:00:00",
+        "excerpt": "A look at who lines up.",
+    },
+]
+
+EVENT_NEWS_8002 = [
+    {
+        "entry_id": 100553, "title": "Karlovy Vary wraps up",
+        "slug": "karlovy-vary-wraps-up", "entry_date": "2026-08-20 18:00:00",
+        "excerpt": "Results from the World Cup.",
+    },
+]
+
+
+class TestEventsListUrlRecognition:
+    """Distinguishing the bare listing endpoint from a specific event's sub-resource."""
+
+    @pytest.mark.parametrize("url", [
+        "https://api.triathlon.org/v1/events",
+        "https://api.triathlon.org/v1/events/",
+        "https://api.triathlon.org/v1/events?category_id=351",
+    ])
+    def test_recognises_the_listing_endpoint(self, url):
+        from triagent.worldtriathlon import _is_events_list_url
+
+        assert _is_events_list_url(url)
+
+    @pytest.mark.parametrize("url", [
+        "https://api.triathlon.org/v1/events/8001/news",
+        "https://api.triathlon.org/v1/news",
+        "https://api.triathlon.org/v1/federations/1",
+    ])
+    def test_does_not_match_a_specific_event_or_other_resource(self, url):
+        from triagent.worldtriathlon import _is_events_list_url
+
+        assert not _is_events_list_url(url)
+
+
+class TestDateWindow:
+    def test_window_brackets_today(self):
+        from triagent.worldtriathlon import _date_window
+
+        start, end = _date_window()
+        today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+        assert start < today < end
+
+    def test_window_respects_configured_lookback_and_lookahead(self):
+        from triagent.worldtriathlon import (
+            EVENT_LOOKAHEAD_DAYS,
+            EVENT_LOOKBACK_DAYS,
+            _date_window,
+        )
+
+        start, end = _date_window()
+        today = dt.datetime.now(dt.timezone.utc).date()
+        assert dt.date.fromisoformat(start) == today - dt.timedelta(days=EVENT_LOOKBACK_DAYS)
+        assert dt.date.fromisoformat(end) == today + dt.timedelta(days=EVENT_LOOKAHEAD_DAYS)
+
+
+class TestEventDiscovery:
+    def test_extracts_id_and_title_pairs(self):
+        from triagent.worldtriathlon import _discover_event_ids
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_resp(EVENTS_PAGE)):
+            pairs = _discover_event_ids(
+                "https://api.triathlon.org/v1/events", api_key=None, timeout=10
+            )
+        assert pairs == [("8001", "2026 WTCS Hamburg"), ("8002", "2026 World Cup Karlovy Vary")]
+
+    def test_start_and_end_date_are_sent(self):
+        from triagent.worldtriathlon import _date_window, _discover_event_ids
+
+        seen = {}
+
+        def fake_get(url, **kw):
+            seen["url"] = url
+            return _resp(EVENTS_PAGE)
+
+        with patch("triagent.worldtriathlon.requests.get", side_effect=fake_get):
+            _discover_event_ids(
+                "https://api.triathlon.org/v1/events", api_key=None, timeout=10
+            )
+        start, end = _date_window()
+        assert f"start_date={start}" in seen["url"]
+        assert f"end_date={end}" in seen["url"]
+
+    def test_preserves_query_params_already_on_the_url(self):
+        from triagent.worldtriathlon import _discover_event_ids
+
+        seen = {}
+
+        def fake_get(url, **kw):
+            seen["url"] = url
+            return _resp(EVENTS_PAGE)
+
+        with patch("triagent.worldtriathlon.requests.get", side_effect=fake_get):
+            _discover_event_ids(
+                "https://api.triathlon.org/v1/events?category_id=351",
+                api_key=None, timeout=10,
+            )
+        assert "category_id=351" in seen["url"]
+
+    def test_skips_events_with_no_id(self):
+        from triagent.worldtriathlon import _discover_event_ids
+
+        payload = {"data": [{"event_title": "no id"}, {"event_id": 1, "event_title": "ok"}]}
+        with patch("triagent.worldtriathlon.requests.get", return_value=_resp(payload)):
+            pairs = _discover_event_ids(
+                "https://api.triathlon.org/v1/events", api_key=None, timeout=10
+            )
+        assert pairs == [("1", "ok")]
+
+    def test_caps_at_max_events_per_run(self):
+        from triagent.worldtriathlon import MAX_EVENTS_PER_RUN, _discover_event_ids
+
+        many = {"data": [
+            {"event_id": n, "event_title": f"event {n}"} for n in range(MAX_EVENTS_PER_RUN + 10)
+        ]}
+        with patch("triagent.worldtriathlon.requests.get", return_value=_resp(many)):
+            pairs = _discover_event_ids(
+                "https://api.triathlon.org/v1/events", api_key=None, timeout=10
+            )
+        assert len(pairs) == MAX_EVENTS_PER_RUN
+
+
+class TestFetchApiViaEventDiscovery:
+    """fetch_api() on the bare /v1/events URL merges each event's own news."""
+
+    def _dispatch(self, *, news_8002_error: Exception | None = None):
+        def fake_get(url, **kw):
+            if url.startswith("https://api.triathlon.org/v1/events/8001/news"):
+                return _resp(EVENT_NEWS_8001)
+            if url.startswith("https://api.triathlon.org/v1/events/8002/news"):
+                if news_8002_error:
+                    raise news_8002_error
+                return _resp(EVENT_NEWS_8002)
+            if "v1/events" in url:
+                return _resp(EVENTS_PAGE)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        return fake_get
+
+    def test_merges_news_across_discovered_events(self):
+        from triagent.worldtriathlon import fetch_api
+
+        with patch("triagent.worldtriathlon.requests.get", side_effect=self._dispatch()):
+            parsed = fetch_api("https://api.triathlon.org/v1/events")
+
+        titles = {e["title"] for e in parsed["entries"]}
+        assert titles == {"Hamburg preview: the contenders", "Karlovy Vary wraps up"}
+
+    def test_entries_use_the_confirmed_field_mapping(self):
+        from triagent.worldtriathlon import ARTICLE_BASE, fetch_api
+
+        with patch("triagent.worldtriathlon.requests.get", side_effect=self._dispatch()):
+            parsed = fetch_api("https://api.triathlon.org/v1/events")
+
+        by_title = {e["title"]: e for e in parsed["entries"]}
+        hamburg = by_title["Hamburg preview: the contenders"]
+        assert hamburg["link"] == ARTICLE_BASE + "hamburg-preview-the-contenders"
+        assert hamburg["published_parsed"][:6] == (2026, 8, 19, 9, 0, 0)
+
+    def test_one_events_news_failing_does_not_drop_the_others(self):
+        import requests as req
+        from triagent.worldtriathlon import fetch_api
+
+        with patch(
+            "triagent.worldtriathlon.requests.get",
+            side_effect=self._dispatch(news_8002_error=req.ConnectionError("down")),
+        ):
+            parsed = fetch_api("https://api.triathlon.org/v1/events")
+
+        assert [e["title"] for e in parsed["entries"]] == ["Hamburg preview: the contenders"]
+
+    def test_no_events_in_window_yields_no_entries_not_an_error(self):
+        from triagent.worldtriathlon import fetch_api
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_resp({"data": []})):
+            parsed = fetch_api("https://api.triathlon.org/v1/events")
+        assert parsed["entries"] == []
+
+    def test_auth_failure_on_the_events_list_propagates(self):
+        from triagent.worldtriathlon import WorldTriathlonAuthError, fetch_api
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_http_error(401)):
+            with pytest.raises(WorldTriathlonAuthError):
+                fetch_api("https://api.triathlon.org/v1/events")
+
+    def test_auth_failure_on_a_per_event_news_call_also_propagates(self):
+        """Same key, same problem on every call — no point limping through the rest."""
+        from triagent.worldtriathlon import WorldTriathlonAuthError, fetch_api
+
+        def fake_get(url, **kw):
+            if "v1/events" in url and "/news" not in url:
+                return _resp(EVENTS_PAGE)
+            return _http_error(401)
+
+        with patch("triagent.worldtriathlon.requests.get", side_effect=fake_get):
+            with pytest.raises(WorldTriathlonAuthError):
+                fetch_api("https://api.triathlon.org/v1/events")
+
+
+class TestDiscoveryPipelineIntegration:
+    def test_default_endpoint_reaches_news_pipeline_end_to_end(self):
+        from triagent.news import fetch_recent
+        from triagent.worldtriathlon import DEFAULT_ENDPOINT
+
+        def fake_get(url, **kw):
+            if "/news" in url:
+                return _resp(EVENT_NEWS_8001 if "8001" in url else EVENT_NEWS_8002)
+            return _resp(EVENTS_PAGE)
+
+        with patch("requests.get", side_effect=fake_get):
+            items = fetch_recent([DEFAULT_ENDPOINT], max_age_hours=24 * 365)
+
+        assert len(items) == 2
+        assert all(i.source == "World Triathlon" for i in items)
+
+
+class TestDescribeEventDiscovery:
+    def test_reports_discovered_events(self):
+        from triagent.worldtriathlon import describe
+
+        def fake_get(url, **kw):
+            if "/news" in url:
+                return _resp(EVENT_NEWS_8001)
+            return _resp(EVENTS_PAGE)
+
+        with patch("triagent.worldtriathlon.requests.get", side_effect=fake_get):
+            report = describe("https://api.triathlon.org/v1/events")
+
+        assert report["events_found"] == 2
+        assert {e["event_id"] for e in report["events"]} == {"8001", "8002"}
+        assert report["mapped"]["title"] == "Hamburg preview: the contenders"
+        assert report["articles_found"] == 1
+
+    def test_zero_events_is_reported_distinctly_from_a_mapping_problem(self):
+        """Empty calendar window must not suggest fixing LIST_KEYS."""
+        from triagent.worldtriathlon import describe
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_resp({"data": []})):
+            report = describe("https://api.triathlon.org/v1/events")
+
+        assert report["events_found"] == 0
+        assert "date window" in report.get("message", "").lower()
+
+    def test_auth_failure_is_still_reported_as_needs_auth(self):
+        from triagent.worldtriathlon import describe
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_http_error(401)):
+            report = describe("https://api.triathlon.org/v1/events")
+
+        assert report["needs_auth"] is True
+
+
+class TestApicheckEventDiscoveryExitCodes:
+    def _run(self, report):
+        import triagent.__main__ as m
+
+        with patch("triagent.worldtriathlon.describe", return_value=report):
+            with patch.object(m.sys, "argv", ["triagent", "--mode", "apicheck"]):
+                return m.main()
+
+    def test_zero_events_passes_rather_than_suggesting_list_keys(self, capsys):
+        assert self._run({
+            "url": "u", "authenticated": True, "events_found": 0,
+            "message": "no events found in the date window",
+        }) == 0
+        assert "LIST_KEYS" not in capsys.readouterr().out
+
+    def test_events_with_a_working_sample_passes(self):
+        assert self._run({
+            "url": "u", "authenticated": True, "events_found": 2,
+            "events": [{"event_id": "1", "event_title": "x"}],
+            "articles_found": 1,
+            "mapped": {"title": "t", "url": "https://triathlon.org/news/x"},
+        }) == 0

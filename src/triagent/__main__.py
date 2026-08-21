@@ -195,6 +195,13 @@ def main() -> int:
             if report.get("authenticated"):
                 return 1  # a key was sent and refused: that IS a failure
             return 0
+        if report.get("events_found") == 0:
+            # An empty calendar window is a content question, not a mapping
+            # one — the events list endpoint answered fine. Suggesting
+            # LIST_KEYS here would send the next person chasing a bug that
+            # isn't there.
+            print("\n" + report.get("message", "no events found"))
+            return 0
         if not report.get("articles_found"):
             print(
                 "\nreached the endpoint but found no article list. The keys "

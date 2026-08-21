@@ -123,66 +123,88 @@ dedicated adapter rather than a `FEEDS` entry you probe this way.
 
 ### World Triathlon (the governing body)
 
-`triathlon.org/news` is an HTML page with no feed, so it cannot go in `FEEDS`.
-World Triathlon publishes through a JSON API, and the agent has an adapter for
-it. Add the API endpoint to `FEEDS` like any other source:
+`triathlon.org/news` is an HTML page with no feed, so it cannot go in `FEEDS`
+directly. World Triathlon publishes through a JSON API instead, and the agent
+has an adapter for it. Add the API endpoint to `FEEDS` like any other source:
 
 ```
-api.triathlon.org/v1/news
+api.triathlon.org/v1/events
 ```
 
 Any URL on `api.triathlon.org` is fetched as JSON automatically — no separate
 setting. Its stories then get the same treatment as everything else, including
 **governing-body priority**, which floats them to the top of the post.
 
-To point at a different endpoint, set variable `WORLD_TRIATHLON_ENDPOINT`.
+**Why `/v1/events` and not something that says "news".** The first version of
+this pointed at `/v1/news`, which the API's own key confirmed exists as a
+concept — a probe there returned `401 Unauthorized` with a JSON content type —
+but the URL itself was wrong: it 404s once authenticated. World Triathlon's
+own documentation explains why: there is no flat "all news" endpoint. News is
+only exposed *scoped* — per event (`/v1/events/{id}/news`) or per federation,
+and a federation's own `latest_news` reportedly returns null since a CMS
+migration.
 
-**The endpoint is confirmed real and it needs a key.** A probe returned
-`401 Unauthorized` with `content-type: application/json` — not a 404, not an
-HTML error page. That is the API acknowledging it exists and wants
-credentials, so `api.triathlon.org/v1/news` is the right URL and
-`WORLD_TRIATHLON_API_KEY` is the only thing still missing.
+So the adapter treats `/v1/events` as a discovery step: on every run it asks
+what's happening in a rolling window around today (14 days back, 45 days
+ahead), then fetches each of those events' own news and merges the results.
+That also means it never goes stale the way a single hand-picked event_id
+would — nothing here needs manual rotation as the season moves through its
+calendar.
 
 Request developer/API access from World Triathlon and add the key as a
 repository **secret** named `WORLD_TRIATHLON_API_KEY`. It is sent as the
-`apikey` header.
-
-Leaving `api.triathlon.org/v1/news` in `FEEDS` without a key is harmless: the
-source contributes nothing, logs one line explaining why, and the rest of the
-run is unaffected. It starts working the moment the secret exists.
+`apikey` header. Leaving `api.triathlon.org/v1/events` in `FEEDS` without a key
+is harmless: the source contributes nothing, logs one line explaining why, and
+the rest of the run is unaffected. It starts working the moment the secret
+exists.
 
 **Confirm it with the workflow.** The feedcheck workflow ends with a *Probe the
-World Triathlon API* step that prints the real response shape:
+World Triathlon API* step. For the discovery endpoint it reports which events
+it found and maps a sample article from the first one's news:
 
 ```
-"articles_found": 12,
+"mode": "event-discovery",
+"date_window": { "start": "2026-08-07", "end": "2026-10-05" },
+"events_found": 3,
+"events": [
+  { "event_id": "8001", "event_title": "2026 WTCS Hamburg" },
+  ...
+],
+"sample_event": { "event_id": "8001", "event_title": "2026 WTCS Hamburg", "articles_found": 4 },
 "mapped": {
-  "title": "Paris 2028 qualification criteria confirmed",
-  "url": "https://triathlon.org/news/paris-2028-qualification-criteria-confirmed",
-  "date_parsed": "2026-08-20 09:30:00+00:00"
-},
-"unmapped_keys": ["cover_image", "news_id", "tags"]
+  "title": "Hamburg preview: the contenders",
+  "url": "https://triathlon.org/news/hamburg-preview-the-contenders",
+  "date_parsed": "2026-08-19 09:00:00+00:00"
+}
 
-mapping works: 12 article(s), first one resolves to https://triathlon.org/news/...
+mapping works: 4 article(s), first one resolves to https://triathlon.org/news/...
 ```
 
-The mapping was written without a reachable host, so read that output rather
-than assuming:
+Read the outcome rather than assuming:
 
-- **`mapping works`** — add `api.triathlon.org/v1/news` to `FEEDS`.
+- **`mapping works`** — leave `api.triathlon.org/v1/events` in `FEEDS`, done.
 - **`requires authentication (401)`** — expected until the secret is set. The
   step **passes**: not configured yet is a state, not a failure.
 - **`rejected the key`** — the secret is set but not accepted. This one *does*
   fail the step; check the key has not expired.
+- **`no events found in the date window`** — the events endpoint itself works,
+  but nothing is scheduled nearby right now (an off-season gap, most likely).
+  The step **passes**: this is a content question, not a broken mapping.
 - **`endpoint unreachable`** — a wrong URL or a network problem.
-- **`found no article list`** — the payload nests articles under a key the
-  adapter does not know. The printed top-level keys name it; add it to
-  `LIST_KEYS` in `src/triagent/worldtriathlon.py`.
-- **`title, url could not be mapped`** — articles were found but use different
-  field names. `article_keys` lists the real ones; add them to `TITLE_KEYS`,
-  `URL_KEYS` or `SLUG_KEYS`.
+- **`sample_event_error`** — the events list worked but a specific event's
+  `/news` call failed. Worth a look, but one event failing does not fail the
+  whole source in production — the other discovered events still count.
+- **`title, url could not be mapped`** — articles were found but use
+  different field names than expected. `article_keys` lists the real ones;
+  add them to `TITLE_KEYS` / `URL_KEYS` / `SLUG_KEYS` in
+  `src/triagent/worldtriathlon.py`.
 
 `unmapped_keys` is informational — it just lists fields the agent ignores.
+
+If World Triathlon ever ships a flat "all news" endpoint, point
+`WORLD_TRIATHLON_ENDPOINT` at it directly (anything that isn't the bare
+`/v1/events` path is fetched and mapped as a single source, skipping
+discovery).
 
 ### Reading the report
 

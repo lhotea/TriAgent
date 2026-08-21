@@ -153,21 +153,49 @@ Two deliberate refusals:
   non-JSON body or an unrecognised envelope behaves like a dead feed, so the
   daily post survives the API changing under it.
 
-A probe confirmed the endpoint: `api.triathlon.org/v1/news` answers `401
-Unauthorized` with a JSON content type, which is the API acknowledging it
-exists and wanting a key rather than a wrong URL. **A 401 with no key
-configured is reported as a state, not a failure** — exiting non-zero there
-painted the whole run red and read as "the adapter is broken", burying the one
+A probe confirmed `api.triathlon.org/v1/news` exists as a concept — `401
+Unauthorized` with a JSON content type is the API acknowledging it wants a key,
+not a wrong URL. **A 401 with no key configured is reported as a state, not a
+failure**; exiting non-zero there painted the whole run red and buried the one
 action that resolves it. A 401 *with* a key does fail, because that key is
-wrong. The same distinction reaches the daily log, so the line says what to do
-rather than naming a status code.
+wrong.
 
-The response schema was never observable from the development environment,
-whose proxy denies triathlon.org. The mapper therefore accepts the field names
-the plausible shapes use, and `--mode apicheck` reports the real structure —
-top-level keys, article keys, what mapped, and what did not — so the mapping is
-settled by evidence rather than another guess. It runs in the feedcheck
-workflow.
+That URL still turned out to be wrong, once authenticated: it 404s. World
+Triathlon's own documentation (reached via web search, since the docs domain
+is as unreachable from this project's development environment as
+triathlon.org itself) explains why — **there is no flat "all news" endpoint**.
+News is exposed only *scoped*: per event (`/v1/events/{id}/news`) or per
+federation, and a federation's own `latest_news` reportedly returns null since
+a CMS migration.
+
+**`fetch_api` treats the confirmed `/v1/events` listing as a discovery step**
+rather than hardcoding one event_id. It asks what's happening in a rolling
+14-day-back/45-day-ahead window, then fetches each of up to `MAX_EVENTS_PER_RUN`
+events' own news and merges the results — capped so one run stays a handful of
+requests rather than one per event on the calendar. This is also what keeps
+the source from going stale the way a single hand-picked event_id would: no
+part of it needs manual rotation as the season moves. Any URL that is *not*
+the bare `/v1/events` path (a specific event's `/news`, or a future flat
+endpoint World Triathlon might add) is fetched and mapped directly instead —
+the discovery step is a fallback for the one case that has no simpler answer.
+
+Two failure boundaries matter here specifically because a discovery flow makes
+two kinds of request, not one: an auth failure on the events list itself
+propagates immediately, since no key will do better on the retry; but a
+non-auth failure fetching one event's news (a bad event_id, a timeout) is
+logged and skipped, leaving the other discovered events' articles intact — the
+per-event equivalent of per-feed isolation for RSS sources.
+
+The field names — `entry_id`, `title`, `slug`, `entry_date`, `excerpt` — are
+confirmed from World Triathlon's own documentation examples, not guessed.
+`--mode apicheck` still exists for the day that changes again: for the
+discovery endpoint it reports which events were found and maps a sample
+article from the first one's news, so a mismatch is diagnosed from evidence
+rather than another guess. It runs in the feedcheck workflow. An empty
+discovery window (nothing on the calendar nearby) is reported distinctly from
+a mapping failure, since printing "add the right key to LIST_KEYS" at someone
+whose actual problem is an off-season gap would send them chasing a bug that
+isn't there.
 
 ---
 
