@@ -65,8 +65,12 @@ URL_KEYS = ("url", "link", "permalink", "web_url", "canonical_url")
 SLUG_KEYS = ("slug", "url_slug", "permalink_slug")
 SUMMARY_KEYS = ("summary", "excerpt", "teaser", "description", "abstract", "content", "body")
 DATE_KEYS = (
-    "published_at", "date_published", "published", "publication_date",
-    "date", "created_at", "updated_at", "modified_at",
+    # entry_date is the confirmed real field name (World Triathlon's own docs
+    # show "entry_date": "2015-09-18 18:06" on a content/news object) — tried
+    # first for that reason. The rest stay as fallbacks for an endpoint that
+    # turns out to use a different convention.
+    "entry_date", "published_at", "date_published", "published",
+    "publication_date", "date", "created_at", "updated_at", "modified_at",
 )
 
 # Formats seen across the plausible shapes: "2026-08-20 09:30:00" (the style
