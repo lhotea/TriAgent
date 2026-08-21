@@ -109,7 +109,19 @@ def _fetch_feed(feed_url: str) -> feedparser.Feed:
     # tri247 returns 403 for it. Identify as a normal browser instead.
     resp = requests.get(feed_url, timeout=10, headers=FEED_HEADERS)
     resp.raise_for_status()
-    return feedparser.parse(resp.content)
+    parsed = feedparser.parse(resp.content)
+    # Carry a little of the response along. When a URL yields no entries, the
+    # useful question is what actually came back — a page, a redirect, a
+    # consent wall — and the parsed feed alone cannot answer it.
+    try:
+        parsed["fetch_meta"] = {
+            "content_type": (resp.headers or {}).get("content-type", ""),
+            "bytes": len(resp.content),
+            "final_url": getattr(resp, "url", feed_url),
+        }
+    except (TypeError, AttributeError):  # a stubbed response in tests
+        pass
+    return parsed
 
 
 # Types a <link rel="alternate"> must advertise for us to treat it as a feed.
@@ -164,6 +176,40 @@ def _fetch_feed_resolved(feed_url: str) -> tuple[feedparser.Feed, str]:
     return _fetch_feed(discovered), discovered
 
 
+def _explain_empty(row: dict, parsed: feedparser.Feed, feed_url: str) -> None:
+    """Describe what a URL returned when it produced no entries.
+
+    "parsed but contained no entries" is where diagnosis stopped, and it cannot
+    tell a JS-rendered page from a consent wall, a redirect, or a feed that is
+    genuinely empty today. triathlon.org/news reports exactly that, and the
+    autodiscovery hop found no feed link to follow — so the next question is
+    what came back instead, and this answers it.
+
+    Every alternate link is listed, including non-feed ones: "this page
+    advertises only text/html" is a definite answer, where silence is not.
+    """
+    meta = {}
+    try:
+        meta = parsed.get("fetch_meta") or {}
+    except (AttributeError, TypeError):
+        pass
+    if meta.get("content_type"):
+        row["content_type"] = meta["content_type"]
+    if meta.get("bytes") is not None:
+        row["bytes"] = meta["bytes"]
+    if meta.get("final_url") and meta["final_url"] != feed_url:
+        row["final_url"] = meta["final_url"]
+
+    links = []
+    for link in parsed.feed.get("links", []) or []:
+        if link.get("rel") == "alternate" and link.get("href"):
+            links.append(f"{link.get('type') or 'no type'} -> {link['href']}")
+    row["alternate_links"] = links
+
+    if parsed.get("bozo_exception"):
+        row["parse_warning"] = str(parsed["bozo_exception"])[:200]
+
+
 def check_feeds(feed_urls: list[str]) -> list[dict]:
     """Probe each feed and report status, without applying any age filter.
 
@@ -189,6 +235,7 @@ def check_feeds(feed_urls: list[str]) -> list[dict]:
                 )
             else:
                 row["error"] = "parsed but contained no entries"
+                _explain_empty(row, parsed, feed_url)
         except Exception as exc:
             row["ok"] = False
             row["entries"] = 0

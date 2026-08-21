@@ -288,7 +288,21 @@ blocked from another — and reports for each one:
 
 It also flags feeds that are *usable but stale* — nothing within ten days.
 Those never reach a post and are the quiet reason a feed list looks longer
-than it is.
+than it is. The first real run of it found **2 of 14 feeds live**: everything
+else was between six days and five years out of date, or failing outright.
+
+When a URL returns nothing, the report says what actually came back — content
+type, size, any redirect, and whether the page advertises a feed at all:
+
+```
+FAIL https://triathlon.org/news
+     parsed but contained no entries
+     served text/html; charset=utf-8 (48213 bytes)
+     page advertises no alternate links — needs a direct feed URL
+```
+
+That last line is the verdict: a page with no advertised feed cannot be read
+without naming its feed URL explicitly, however the site documents it.
 
 ### If posts still look repetitive
 

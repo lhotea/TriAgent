@@ -889,3 +889,62 @@ class TestFeedAutodiscovery:
 
         assert row["ok"] and row["entries"] == 1
         assert row.get("resolved_url") == "https://triathlon.org/rss/news"
+
+
+class TestEmptyFeedDiagnostics:
+    """'parsed but contained no entries' is a dead end for an operator.
+
+    triathlon.org/news reports it, and the autodiscovery hop found nothing to
+    follow — but that one line cannot distinguish a JS-rendered page, a consent
+    wall, a redirect to somewhere else, or a genuinely empty feed. Reporting
+    what actually came back is what makes the next step obvious.
+    """
+
+    PAGE = (
+        "<!doctype html><html><head><title>News</title>"
+        '<link rel="alternate" type="text/html" hreflang="fr" href="/fr/news"/>'
+        "</head><body>rendered by javascript</body></html>"
+    )
+
+    def _resp(self, body, *, content_type="text/html; charset=utf-8", url=None):
+        m = MagicMock()
+        m.text = body
+        m.content = body.encode("utf-8")
+        m.raise_for_status = MagicMock()
+        m.headers = {"content-type": content_type}
+        m.url = url or "https://triathlon.org/news"
+        return m
+
+    def _row(self, resp):
+        from triagent.news import check_feeds
+
+        with patch("triagent.news.requests.get", return_value=resp):
+            return check_feeds(["https://triathlon.org/news"])[0]
+
+    def test_reports_the_content_type(self):
+        row = self._row(self._resp(self.PAGE))
+        assert "text/html" in row["content_type"]
+
+    def test_reports_the_response_size(self):
+        row = self._row(self._resp(self.PAGE))
+        assert row["bytes"] == len(self.PAGE.encode("utf-8"))
+
+    def test_reports_a_redirect_target(self):
+        """A feed URL that lands somewhere else explains an empty result."""
+        row = self._row(self._resp(self.PAGE, url="https://www.triathlon.org/en/news"))
+        assert row["final_url"] == "https://www.triathlon.org/en/news"
+
+    def test_lists_alternate_links_even_when_not_feeds(self):
+        """Naming a non-feed alternate says 'this page advertises no feed'."""
+        row = self._row(self._resp(self.PAGE))
+        assert row["alternate_links"] == ["text/html -> /fr/news"]
+
+    def test_says_so_when_the_page_advertises_nothing(self):
+        bare = "<!doctype html><html><head><title>x</title></head><body/></html>"
+        row = self._row(self._resp(bare))
+        assert row["alternate_links"] == []
+
+    def test_working_feed_carries_no_diagnostics(self):
+        """Detail is for failures — a healthy row must stay readable."""
+        row = self._row(self._resp(RSS_FEED_OK, content_type="application/rss+xml"))
+        assert row["ok"] and "content_type" not in row and "alternate_links" not in row

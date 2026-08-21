@@ -111,6 +111,22 @@ def main() -> int:
             # operator should know which URL actually supplied the entries.
             if row.get("resolved_url"):
                 print(f"     via feed link: {row['resolved_url']}")
+            # For an empty result, say what actually came back — "no entries"
+            # alone cannot separate a rendered page from a redirect or a
+            # consent wall, and that is where diagnosis used to stop.
+            if row.get("content_type"):
+                print(f"     served {row['content_type']} ({row.get('bytes')} bytes)")
+            if row.get("final_url"):
+                print(f"     redirected to: {row['final_url']}")
+            if "alternate_links" in row:
+                links = row["alternate_links"]
+                print(
+                    f"     page advertises: {'; '.join(links)}"
+                    if links
+                    else "     page advertises no alternate links — needs a direct feed URL"
+                )
+            if row.get("parse_warning"):
+                print(f"     parser warning: {row['parse_warning']}")
         working = sum(1 for r in rows if r["ok"])
         print(f"\n{working}/{len(rows)} feeds usable")
         # A feed that yields nothing recent is invisible in a daily run until
