@@ -165,20 +165,32 @@ it found and maps a sample article from the first one's news:
 ```
 "mode": "event-discovery",
 "date_window": { "start": "2026-08-07", "end": "2026-10-05" },
-"events_found": 3,
+"events_found": 5,
 "events": [
-  { "event_id": "8001", "event_title": "2026 WTCS Hamburg" },
+  { "event_id": "194998", "event_title": "2026 Nyon FISU World University Triathlon Championships" },
   ...
 ],
-"sample_event": { "event_id": "8001", "event_title": "2026 WTCS Hamburg", "articles_found": 4 },
+"sample_event": { "event_id": "194998", "event_title": "2026 Nyon FISU World University Triathlon Championships", "articles_found": 10 },
 "mapped": {
-  "title": "Hamburg preview: the contenders",
-  "url": "https://triathlon.org/news/hamburg-preview-the-contenders",
-  "date_parsed": "2026-08-19 09:00:00+00:00"
+  "title": "Nyon set to crown FISU university champions",
+  "url": "https://triathlon.org/news/nyon-set-to-crown-fisu-university-champions",
+  "date_parsed": "2026-08-20 07:15:00+00:00"
+},
+"unmapped_url_like_fields": {
+  "news_url": "https://triathlon.org/news/nyon-set-to-crown-fisu-university-champions",
+  "news_api_url": "https://api.triathlon.org/v1/events/194998/news/448210"
 }
 
-mapping works: 4 article(s), first one resolves to https://triathlon.org/news/...
+mapping works: 10 article(s), first one resolves to https://triathlon.org/news/...
 ```
+
+That is real output from the first production run once discovery was working:
+five events found, ten articles on the sample event. `unmapped_url_like_fields`
+is the field mapping declining to guess — the response carries both `news_url`
+and a distinct `news_api_url`, and nothing available said which one was a
+browsable page, so the URL is composed from `news_slug` instead (already
+confirmed correct) and the two candidates are printed raw for a human to
+settle from evidence.
 
 Read the outcome rather than assuming:
 

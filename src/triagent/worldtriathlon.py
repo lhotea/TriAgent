@@ -26,12 +26,17 @@ each event's own news. That also means the source never goes stale the way a
 single hardcoded event_id would — nothing here needs manually rotating as the
 season moves on.
 
-The field names below — `entry_id`, `title`, `slug`, `entry_date`, `excerpt` —
-are confirmed from World Triathlon's own documentation examples, not guessed.
-`python -m triagent --mode apicheck` still exists to catch the day that
+The field names in `TITLE_KEYS`/`SLUG_KEYS`/`DATE_KEYS`/`SUMMARY_KEYS` are
+confirmed from an actual response, not the docs: the first deploy of this
+discovery flow found real events but mapped title/url/date to null, because
+the live `/v1/events/{id}/news` endpoint prefixes its fields
+(`news_title`, `news_slug`, `news_entry_date`, `news_excerpt`) — a different
+convention than the generic "Content API" docs example this was first built
+from. `python -m triagent --mode apicheck` still exists to catch the day that
 changes again: it reports the actual events found and the actual fields on a
-sample article, so a mismatch is diagnosed from evidence rather than another
-guess.
+sample article, including raw values for anything that looks like a URL but
+wasn't used (see `news_url` vs `news_api_url` below), so a mismatch is
+diagnosed from evidence rather than another guess.
 """
 
 from __future__ import annotations
@@ -95,18 +100,37 @@ EVENT_TITLE_KEYS = ("event_title", "title", "name")
 # The payload nests its list under one of these, or is a bare list.
 LIST_KEYS = ("data", "results", "items", "news", "articles")
 
-TITLE_KEYS = ("title", "headline", "name")
+# The live /v1/events/{id}/news response uses its own prefixed convention —
+# news_title, news_slug, news_entry_date, news_excerpt, news_id — confirmed by
+# a real feedcheck run, not the generic "Content API" docs example this
+# adapter was first built from (that example turned out to describe a
+# different resource). The prefixed names are tried first for that reason.
+#
+# news_url is deliberately NOT in URL_KEYS. The same response also carries a
+# distinct news_api_url, and nothing here can yet tell which one is a
+# browsable page — a wrong guess produces a dead link, which is worse than
+# composing one from news_slug (confirmed correct: triathlon.org/news/{slug}
+# matched a real article URL seen during earlier research). `describe()`
+# prints raw values for exactly this kind of ambiguous field so it gets
+# resolved from evidence rather than another guess.
+TITLE_KEYS = ("news_title", "title", "headline", "name")
 URL_KEYS = ("url", "link", "permalink", "web_url", "canonical_url")
-SLUG_KEYS = ("slug", "url_slug", "permalink_slug")
-SUMMARY_KEYS = ("summary", "excerpt", "teaser", "description", "abstract", "content", "body")
-DATE_KEYS = (
-    # entry_date is the confirmed real field name (World Triathlon's own docs
-    # show "entry_date": "2015-09-18 18:06" on a content/news object) — tried
-    # first for that reason. The rest stay as fallbacks for an endpoint that
-    # turns out to use a different convention.
-    "entry_date", "published_at", "date_published", "published",
-    "publication_date", "date", "created_at", "updated_at", "modified_at",
+SLUG_KEYS = ("news_slug", "slug", "url_slug", "permalink_slug")
+SUMMARY_KEYS = (
+    "news_excerpt", "summary", "excerpt", "teaser", "description",
+    "abstract", "content", "body",
 )
+DATE_KEYS = (
+    "news_entry_date", "entry_date", "published_at", "date_published",
+    "published", "publication_date", "date", "created_at", "updated_at",
+    "modified_at",
+)
+
+# Fields that look like they might be a URL but are not in URL_KEYS — either
+# because they are unconfirmed or, like news_api_url, confirmed to point
+# somewhere other than a browsable page. describe() surfaces their raw
+# values so a real one can be promoted into URL_KEYS with evidence.
+_URL_LIKE_HINT_KEYS = ("news_url", "news_api_url", "api_url", "web_url", "permalink")
 
 # Formats seen across the plausible shapes: "2026-08-20 09:30:00" (the style
 # this API family tends to emit) and ISO 8601 with or without a zone.
@@ -453,11 +477,21 @@ def fetch_api(url: str, *, api_key: str | None = None, timeout: int = 10) -> Fee
 def _mapped_sample(articles: list[dict]) -> dict:
     """The mapping report for one article — shared by both describe() paths."""
     sample = articles[0]
-    return {
+    mapped_url = _article_url(sample)
+    # Which key actually supplied mapped_url, so it can be excluded below —
+    # an explicit URL field and a slug both look "url-like" and one of them
+    # is exactly what got used.
+    used_url_key = next(
+        (k for k in URL_KEYS + SLUG_KEYS if sample.get(k) == mapped_url or
+         (k in SLUG_KEYS and isinstance(sample.get(k), str) and
+          mapped_url == ARTICLE_BASE + sample[k].strip().strip("/"))),
+        None,
+    )
+    report = {
         "article_keys": sorted(sample),
         "mapped": {
             "title": _first(sample, TITLE_KEYS),
-            "url": _article_url(sample),
+            "url": mapped_url,
             "date_raw": _first(sample, DATE_KEYS),
             "date_parsed": str(_parse_date(_first(sample, DATE_KEYS))),
             "summary_present": bool(_first(sample, SUMMARY_KEYS)),
@@ -468,6 +502,17 @@ def _mapped_sample(articles: list[dict]) -> dict:
             - set(SUMMARY_KEYS) - set(DATE_KEYS)
         ),
     }
+    # Surface raw values for fields that look like a URL but were not the one
+    # used, so an ambiguity like news_url vs news_api_url gets resolved from
+    # evidence in this run rather than needing another guess-and-redeploy.
+    url_like = {
+        key: sample[key]
+        for key in _URL_LIKE_HINT_KEYS
+        if key in sample and key != used_url_key and isinstance(sample[key], str)
+    }
+    if url_like:
+        report["unmapped_url_like_fields"] = url_like
+    return report
 
 
 def _describe_direct(url: str, *, api_key: str | None) -> dict:

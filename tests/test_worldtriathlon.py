@@ -794,3 +794,106 @@ class TestApicheckEventDiscoveryExitCodes:
             "articles_found": 1,
             "mapped": {"title": "t", "url": "https://triathlon.org/news/x"},
         }) == 0
+
+
+# --- Confirmed field names from the real /v1/events/{id}/news response ----
+#
+# The feedcheck run reported real data: 5 events discovered, 10 articles on
+# the sample event, but title/url/date all mapped to null. The actual keys
+# are prefixed — news_title, news_slug, news_entry_date, news_excerpt,
+# news_id — a different convention than the generic "Content API" docs
+# example this adapter was originally built from. That earlier mapping was
+# evidence-based for a different endpoint; this is evidence for the one
+# actually in use.
+#
+# news_url is deliberately NOT added to URL_KEYS. The same response also
+# carries a distinct news_api_url field, and without seeing raw values there
+# is no way to tell which one is a browsable page — guessing wrong there
+# would produce a dead link, which is worse than composing one from
+# news_slug (already confirmed safe: triathlon.org/news/{slug} matches a
+# real URL seen during earlier research). describe() now prints raw values
+# for exactly this kind of ambiguous field so the next run resolves it from
+# evidence instead of another guess.
+
+REAL_NEWS_ITEM = {
+    "news_id": 448210,
+    "news_title": "Nyon set to crown FISU university champions",
+    "news_slug": "nyon-set-to-crown-fisu-university-champions",
+    "news_entry_date": "2026-08-20 07:15:00",
+    "news_excerpt": "The best university triathletes gather in Switzerland.",
+    "news_url": "https://triathlon.org/news/nyon-set-to-crown-fisu-university-champions",
+    "news_api_url": "https://api.triathlon.org/v1/events/194998/news/448210",
+    "author": "World Triathlon",
+    "news_categories": ["university"],
+    "tags": [],
+}
+
+
+class TestConfirmedEventNewsFieldNames:
+    def test_maps_the_prefixed_title(self):
+        from triagent.worldtriathlon import TITLE_KEYS, _first
+
+        assert _first(REAL_NEWS_ITEM, TITLE_KEYS) == (
+            "Nyon set to crown FISU university champions"
+        )
+
+    def test_maps_the_prefixed_date(self):
+        from triagent.worldtriathlon import DATE_KEYS, _first, _parse_date
+
+        raw = _first(REAL_NEWS_ITEM, DATE_KEYS)
+        assert raw == "2026-08-20 07:15:00"
+        assert _parse_date(raw) == dt.datetime(2026, 8, 20, 7, 15, tzinfo=dt.timezone.utc)
+
+    def test_maps_the_prefixed_excerpt(self):
+        from triagent.worldtriathlon import SUMMARY_KEYS, _first
+
+        assert "university triathletes" in _first(REAL_NEWS_ITEM, SUMMARY_KEYS)
+
+    def test_composes_the_url_from_the_prefixed_slug(self):
+        """Not from news_url — see module note on the news_api_url ambiguity."""
+        from triagent.worldtriathlon import ARTICLE_BASE, _article_url
+
+        assert _article_url(REAL_NEWS_ITEM) == (
+            ARTICLE_BASE + "nyon-set-to-crown-fisu-university-champions"
+        )
+
+    def test_end_to_end_through_to_feed(self):
+        from triagent.worldtriathlon import ARTICLE_BASE, to_feed
+
+        parsed = to_feed({"data": [REAL_NEWS_ITEM]})
+        entry = parsed["entries"][0]
+        assert entry["title"] == "Nyon set to crown FISU university champions"
+        assert entry["link"] == ARTICLE_BASE + "nyon-set-to-crown-fisu-university-champions"
+        assert entry["published_parsed"][:6] == (2026, 8, 20, 7, 15, 0)
+        assert "university triathletes" in entry["summary"]
+
+
+class TestDescribeSurfacesAmbiguousUrlFields:
+    """A field that looks like a URL but isn't the chosen one must show its
+    raw value, not just its name — that's what would have resolved the
+    news_url vs news_api_url question in one run instead of two."""
+
+    def test_reports_raw_values_for_unmapped_url_like_keys(self):
+        from triagent.worldtriathlon import describe
+
+        def fake_get(url, **kw):
+            if "/news" in url:
+                return _resp([REAL_NEWS_ITEM])
+            return _resp(EVENTS_PAGE)
+
+        with patch("triagent.worldtriathlon.requests.get", side_effect=fake_get):
+            report = describe("https://api.triathlon.org/v1/events")
+
+        assert report["unmapped_url_like_fields"] == {
+            "news_url": "https://triathlon.org/news/nyon-set-to-crown-fisu-university-champions",
+            "news_api_url": "https://api.triathlon.org/v1/events/194998/news/448210",
+        }
+
+    def test_does_not_repeat_a_field_already_used_for_the_mapped_url(self):
+        from triagent.worldtriathlon import describe
+
+        item = {"title": "t", "url": "https://triathlon.org/news/t", "slug": "t"}
+        with patch("triagent.worldtriathlon.requests.get", return_value=_resp([item])):
+            report = describe("https://api.triathlon.org/v1/events/1/news")
+
+        assert "url" not in report.get("unmapped_url_like_fields", {})

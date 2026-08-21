@@ -186,12 +186,23 @@ non-auth failure fetching one event's news (a bad event_id, a timeout) is
 logged and skipped, leaving the other discovered events' articles intact — the
 per-event equivalent of per-feed isolation for RSS sources.
 
-The field names — `entry_id`, `title`, `slug`, `entry_date`, `excerpt` — are
-confirmed from World Triathlon's own documentation examples, not guessed.
-`--mode apicheck` still exists for the day that changes again: for the
+The field names are confirmed from an actual response, not the docs. The
+first deploy of the discovery flow found five real events and ten real
+articles on the sample event, but mapped title/url/date to null — the live
+`/v1/events/{id}/news` endpoint prefixes its fields (`news_title`,
+`news_slug`, `news_entry_date`, `news_excerpt`), a different convention than
+the generic "Content API" docs example this was first built from. `TITLE_KEYS`
+etc. now try the prefixed names first. One field was deliberately left
+unmapped: the same response carries both `news_url` and a distinct
+`news_api_url`, and nothing available could yet say which one is a browsable
+page — a wrong guess produces a dead link, worse than composing one from
+`news_slug`, which is already confirmed correct. `describe()` now prints raw
+values for exactly this kind of ambiguous field, so an evidence-backed answer
+comes from the next run instead of another guess.
+
+`--mode apicheck` still exists for the day the mapping changes again: for the
 discovery endpoint it reports which events were found and maps a sample
-article from the first one's news, so a mismatch is diagnosed from evidence
-rather than another guess. It runs in the feedcheck workflow. An empty
+article from the first one's news. It runs in the feedcheck workflow. An empty
 discovery window (nothing on the calendar nearby) is reported distinctly from
 a mapping failure, since printing "add the right key to LIST_KEYS" at someone
 whose actual problem is an off-season gap would send them chasing a bug that
