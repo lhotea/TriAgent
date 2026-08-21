@@ -118,10 +118,8 @@ candidates worth adding to FEEDS:
 Copy the winners into `FEEDS`. Anything not listed there either failed or had
 nothing within ten days.
 
-For World Triathlon: `triathlon.org/news` advertises no feed, so it needs a
-direct URL. Open the page, View Source, and search for `rss` or `feed`; if
-there is a URL, probe it as a candidate. If there is not, they publish through
-an API rather than RSS and it would need a small adapter instead.
+For World Triathlon, see the next section — it has no feed and is handled by a
+dedicated adapter rather than a `FEEDS` entry you probe this way.
 
 ### World Triathlon (the governing body)
 
