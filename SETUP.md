@@ -59,34 +59,91 @@ Repo → **Settings → Secrets and variables → Actions → Variables**:
 
 ## 4. RSS feeds
 
-Optional but recommended — the built-in list is small and feed URLs rot.
+**This is the single biggest lever on post quality.** A feedcheck run on
+2026-08-21 found **2 of 14 configured feeds actually live** — the rest were
+between six days and five years out of date, or failing outright. The agent
+cannot invent variety from two publishers, which is why posts looked
+repetitive long after the no-repeat ledger was working.
 
-Set a **variable** named `FEEDS` to a comma- or newline-separated list. Bare
-domains are fine; the scheme is added automatically.
+### The value to set
+
+Repo → **Settings → Secrets and variables → Actions → Variables** → `FEEDS`:
 
 ```
-triathlete.com/feed/, dcrainmaker.com/feed, 220triathlon.com/feed/atom
+220triathlon.com/feed/atom, atriathletesdiary.com/blog/feed, dcrainmaker.com/feed, marathonsandmotivation.com/feed, t3-triathlon.com/feed
 ```
 
-Directories like `rss.feedspot.com/triathlon_rss_feeds/` are a good source.
+Every one of those was probed and returned dated entries. Bare domains are
+fine — the scheme is added automatically.
 
-Use the full feed path, not the bare domain: `tri247.com` returns 403, while
-`www.tri247.com/feed` works. Run #123 reached 13 of 14 feeds, the single failure
-being exactly that mistake.
+Removed from the previous value, with the reason:
 
-Verify before relying on them:
+| Dropped | Why |
+|---|---|
+| `nutri-tri.com/blog/feed` | last post 1,984 days ago |
+| `ironmanhacks.com/feed` | last post 745 days ago |
+| `joefrieltraining.com/feed` | last post 385 days ago |
+| `tritrainingharder.com/blog?format=rss` | last post 93 days ago |
+| `completetri.com/feed` | last post 62 days ago |
+| `bettertriathlete.com/feed` | last post 49 days ago |
+| `totaltritraining.com/blog/feed` | parses to zero entries |
+| `tri247.com/feed` | 403 — try the `www.` host as a candidate |
+| `triathlon.org/news` | serves HTML advertising no feed |
 
-```bash
-python -m triagent --mode feedcheck
+Three of the five kept feeds are themselves slow (6–9 days), so they only
+surface once the window widens. `220triathlon.com/feed/atom` is doing most of
+the work. **Adding live news sources is the highest-value change available to
+this project** — more than any code change left.
+
+### Qualifying new feeds before they go live
+
+Never paste a URL straight into `FEEDS` because it looks right. That is how the
+list accumulated nine dead entries. Instead, probe candidates first:
+
+Actions → **feedcheck** → *Run workflow* → paste into **extra_feeds**:
+
+```
+www.tri247.com/feed, triathlete.com/feed/, slowtwitch.com/feed, trainerroad.com/blog/feed/, triathlonmagazine.ca/feed, witsup.com/feed
 ```
 
-The build log prints `N/M feeds reachable` on every run, plus `items per
-source` and `top 12 by source` — so if one publisher is dominating, it shows in
-the log rather than only in the finished post.
+Those are **unverified suggestions** — the workflow is what decides. Candidates
+are probed alongside the live list, marked `[candidate]`, and never added to
+`FEEDS` by the run. Anything live comes back under:
+
+```
+candidates worth adding to FEEDS:
+  https://www.tri247.com/feed (10 entries, newest 3.1h old)
+```
+
+Copy the winners into `FEEDS`. Anything not listed there either failed or had
+nothing within ten days.
+
+For World Triathlon: `triathlon.org/news` advertises no feed, so it needs a
+direct URL. Open the page, View Source, and search for `rss` or `feed`; if
+there is a URL, probe it as a candidate. If there is not, they publish through
+an API rather than RSS and it would need a small adapter instead.
+
+### Reading the report
+
+```
+OK   https://220triathlon.com/feed/atom
+     10 entries, newest 5.2h old
+FAIL https://triathlon.org/news
+     parsed but contained no entries
+     served text/html; charset=utf-8 (48213 bytes)
+     page advertises no alternate links — needs a direct feed URL
+```
+
+The report also flags feeds that are *usable but stale* (nothing within ten
+days). Those never reach a post and are the quiet reason a feed list looks
+longer than it is.
+
+The daily build log prints `items per source` and `top 12 by source`, plus a
+line naming any feed that contributed nothing — so a source going quiet shows
+up in the log rather than only in the finished post.
 
 Stories are round-robined across publishers, so a high-volume site cannot crowd
-out the rest. Adding more feeds widens the pool without any one of them taking
-over.
+out the rest. Adding more feeds widens the pool without any one taking over.
 
 ---
 

@@ -100,10 +100,19 @@ class TestSettingsFromEnv:
         assert len(s.affiliate_urls) == 2
 
     def test_default_feeds(self, env_no_env_file, monkeypatch):
+        """Defaults must be usable, not any particular URL.
+
+        This previously pinned triathlete.com as feeds[0]. Naming a specific
+        host makes the test fail whenever the list is corrected, which is the
+        opposite of what it should protect: the list is *expected* to change as
+        feeds rot, and nine of the fourteen entries in production turned out to
+        be dead. What must hold is that there are some and they are fetchable.
+        """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         s = Settings.from_env()
         assert len(s.feeds) > 0
-        assert "triathlete.com" in s.feeds[0]
+        assert all(u.startswith("https://") for u in s.feeds)
+        assert len(set(s.feeds)) == len(s.feeds), "no duplicate default feeds"
 
     def test_default_model(self, env_no_env_file, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")

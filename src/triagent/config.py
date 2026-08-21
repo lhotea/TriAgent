@@ -13,21 +13,32 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = REPO_ROOT / "assets"
 ASSETS_DIR.mkdir(exist_ok=True)
 
-# Verify changes to this list with `python -m triagent --mode feedcheck` before
-# relying on them. Run #117 showed several of the original entries had never
-# worked: two domains no longer resolve, one path 404s, one blocks bots.
+# Only URLs a feedcheck run has actually confirmed. Every entry here was
+# probed on 2026-08-21 and returned dated entries; the age shown is how stale
+# the newest story was at that moment.
 #
-# Status as of the last observed production run:
-#   triathlete.com  — reachable, parses
-#   tri247.com      — returned 403 for the default requests user-agent; a
-#                     browser UA is now sent, which usually clears it
-#   slowtwitch.com  — /rss/news.rss returned 404; path below is a guess and
-#                     needs feedcheck to confirm
-# Removed: trinewsnetwork.com and worldtriathlon.org (DNS did not resolve).
+#   220triathlon.com/feed/atom       5.2h   the one high-volume news source
+#   atriathletesdiary.com/blog/feed  8.8h
+#   dcrainmaker.com/feed           215.5h   gear/reviews, publishes in bursts
+#   marathonsandmotivation.com/feed 189.5h
+#   t3-triathlon.com/feed          157.6h
+#
+# Deliberately absent, and worth re-reading before adding anything:
+# the previous list carried nine entries that looked plausible and were dead —
+# nutri-tri had not published in five years, ironmanhacks in two, joefriel in
+# one. They cost a request each and contributed nothing, while making the feed
+# list look four times healthier than it was. That is why the rule is now
+# "probe it first": run feedcheck with EXTRA_FEEDS (or the workflow's
+# extra_feeds input) and add only what comes back live.
+#
+# Also absent: triathlon.org/news, which serves HTML advertising no feed, and
+# tri247.com/feed, which returns 403 without a www host.
 DEFAULT_FEEDS = [
-    "https://www.triathlete.com/feed/",
-    "https://www.tri247.com/feed",
-    "https://www.slowtwitch.com/feed",
+    "https://220triathlon.com/feed/atom",
+    "https://atriathletesdiary.com/blog/feed",
+    "https://dcrainmaker.com/feed",
+    "https://marathonsandmotivation.com/feed",
+    "https://t3-triathlon.com/feed",
 ]
 
 
@@ -53,6 +64,22 @@ def parse_feed_list(raw: str) -> list[str]:
     """Split a comma- or whitespace-separated feed list and normalize each entry."""
     parts = re.split(r"[,\s]+", raw.strip())
     return [u for u in (normalize_feed_url(p) for p in parts) if u]
+
+
+def dedupe_feeds(*lists: list[str]) -> list[str]:
+    """Merge feed lists, keeping first-seen order and dropping repeats.
+
+    Candidate feeds are pasted by hand and routinely overlap the production
+    list; probing the same URL twice wastes a request and reports it twice.
+    """
+    seen: set[str] = set()
+    merged: list[str] = []
+    for feeds in lists:
+        for url in feeds:
+            if url and url not in seen:
+                seen.add(url)
+                merged.append(url)
+    return merged
 
 
 def _required(name: str) -> str:

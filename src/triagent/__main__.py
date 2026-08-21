@@ -96,9 +96,20 @@ def main() -> int:
         return 0
 
     if args.mode == "feedcheck":
+        import os
+
+        from .config import dedupe_feeds, parse_feed_list
         from .news import check_feeds
 
-        rows = check_feeds(settings.feeds)
+        # Candidates are probed alongside the live list but are not part of it.
+        # Nine of fourteen entries in the production FEEDS variable turned out
+        # to be stale or dead — one abandoned five years ago — because URLs
+        # were added on the strength of looking plausible. This is how a
+        # candidate earns its place without the daily job finding out first.
+        candidates = parse_feed_list(os.environ.get("EXTRA_FEEDS") or "")
+        live = list(settings.feeds)
+        rows = check_feeds(dedupe_feeds(live, candidates))
+        live_set = set(live)
         for row in rows:
             mark = "OK  " if row["ok"] else "FAIL"
             detail = (
@@ -106,7 +117,8 @@ def main() -> int:
                 if row["ok"]
                 else row.get("error", "")
             )
-            print(f"{mark} {row['url']}\n     {detail}")
+            tag = "" if row["url"] in live_set else "  [candidate]"
+            print(f"{mark} {row['url']}{tag}\n     {detail}")
             # A URL that served a page rather than a feed still works, but the
             # operator should know which URL actually supplied the entries.
             if row.get("resolved_url"):
@@ -127,8 +139,22 @@ def main() -> int:
                 )
             if row.get("parse_warning"):
                 print(f"     parser warning: {row['parse_warning']}")
-        working = sum(1 for r in rows if r["ok"])
-        print(f"\n{working}/{len(rows)} feeds usable")
+        live_rows = [r for r in rows if r["url"] in live_set]
+        working = sum(1 for r in live_rows if r["ok"])
+        print(f"\n{working}/{len(live_rows)} live feeds usable")
+        good_candidates = [
+            r for r in rows
+            if r["url"] not in live_set
+            and r["ok"]
+            and (r.get("newest_age_hours") or 0) <= 240
+        ]
+        if good_candidates:
+            print("\ncandidates worth adding to FEEDS:")
+            for r in good_candidates:
+                print(
+                    f"  {r.get('resolved_url') or r['url']} "
+                    f"({r['entries']} entries, newest {r['newest_age_hours']}h old)"
+                )
         # A feed that yields nothing recent is invisible in a daily run until
         # the posts start repeating, so call it out here.
         stale = [

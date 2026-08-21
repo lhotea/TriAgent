@@ -6,6 +6,11 @@ name: feedcheck
 # recent is invisible in a daily run until the posts start repeating.
 on:
   workflow_dispatch:
+    inputs:
+      extra_feeds:
+        description: "Candidate feed URLs to probe (comma or newline separated). Not added to FEEDS."
+        required: false
+        default: ""
 
 jobs:
   feedcheck:
@@ -25,4 +30,5 @@ jobs:
       - name: Probe every feed
         env:
           FEEDS: ${{ vars.FEEDS }}
+          EXTRA_FEEDS: ${{ inputs.extra_feeds }}
         run: python -m triagent --mode feedcheck

@@ -948,3 +948,55 @@ class TestEmptyFeedDiagnostics:
         """Detail is for failures — a healthy row must stay readable."""
         row = self._row(self._resp(RSS_FEED_OK, content_type="application/rss+xml"))
         assert row["ok"] and "content_type" not in row and "alternate_links" not in row
+
+
+class TestCandidateFeeds:
+    """Feeds must be qualified before they reach the production list.
+
+    Nine of the fourteen entries in the live FEEDS variable turned out to be
+    stale or dead — one abandoned five years ago — because URLs were added on
+    the strength of looking plausible. Probing a candidate has to be possible
+    without putting it in front of the daily job first.
+    """
+
+    def test_candidates_are_probed_alongside_the_real_list(self):
+        from triagent.news import check_feeds
+
+        seen = []
+
+        def fake_get(url, **kw):
+            seen.append(url)
+            return _mock_resp(RSS_FEED_OK)
+
+        with patch("triagent.news.requests.get", side_effect=fake_get):
+            rows = check_feeds(["https://live/feed", "https://candidate/feed"])
+
+        assert len(rows) == 2 and seen == ["https://live/feed", "https://candidate/feed"]
+
+    def test_parse_feed_list_handles_a_pasted_candidate_block(self):
+        """Candidates get pasted from a browser, one per line, often bare."""
+        from triagent.config import parse_feed_list
+
+        pasted = """
+        triathlete.com/feed/
+        slowtwitch.com/feed,
+        https://www.tri247.com/feed
+        """
+        assert parse_feed_list(pasted) == [
+            "https://triathlete.com/feed/",
+            "https://slowtwitch.com/feed",
+            "https://www.tri247.com/feed",
+        ]
+
+    def test_duplicate_candidates_are_not_probed_twice(self):
+        from triagent.config import dedupe_feeds
+
+        assert dedupe_feeds(
+            ["https://a/feed", "https://b/feed"], ["https://a/feed", "https://c/feed"]
+        ) == ["https://a/feed", "https://b/feed", "https://c/feed"]
+
+    def test_dedupe_preserves_the_production_list_first(self):
+        from triagent.config import dedupe_feeds
+
+        out = dedupe_feeds(["https://prod/feed"], ["https://new/feed"])
+        assert out[0] == "https://prod/feed"
