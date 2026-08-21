@@ -35,6 +35,19 @@ log = logging.getLogger(__name__)
 
 SOURCE_NAME = "World Triathlon"
 
+API_KEY_ENV = "WORLD_TRIATHLON_API_KEY"
+
+
+class WorldTriathlonAuthError(requests.HTTPError):
+    """The API answered, but refused the request for lack of a valid key.
+
+    Distinct from a transport failure because it is not a breakage: a 401 with
+    a JSON content type is the endpoint confirming it exists and wants
+    credentials. It carries the one instruction that resolves it, so the daily
+    log line says what to do rather than just naming a status code.
+    """
+
+
 # Hosts that serve the API. Matched exactly or as a subdomain suffix so a
 # lookalike ("notapi.triathlon.org.evil.com") cannot claim the adapter.
 API_HOSTS = ("api.triathlon.org", "api.worldtriathlon.org")
@@ -217,6 +230,26 @@ def to_feed(payload: Any) -> dict:
     return _shape(entries)
 
 
+def _auth_message(status: int, api_key: str | None) -> str:
+    """Say which of the two auth problems this is.
+
+    Telling someone to set a key they have already set is a dead end, so the
+    message turns on whether one was sent.
+    """
+    if api_key:
+        return (
+            f"World Triathlon API rejected the key ({status}). The "
+            f"{API_KEY_ENV} secret is set but not accepted — check it has not "
+            "expired and is valid for the news endpoint."
+        )
+    return (
+        f"World Triathlon API requires authentication ({status}). The endpoint "
+        f"is reachable and returns JSON; set the {API_KEY_ENV} secret to use "
+        "it. Until then this source contributes nothing and the rest of the "
+        "run is unaffected."
+    )
+
+
 def fetch_api(url: str, *, api_key: str | None = None, timeout: int = 10) -> dict:
     """Fetch the API and return it in feedparser's shape.
 
@@ -233,7 +266,13 @@ def fetch_api(url: str, *, api_key: str | None = None, timeout: int = 10) -> dic
         headers["apikey"] = api_key
 
     resp = requests.get(url, timeout=timeout, headers=headers)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (401, 403):
+            raise WorldTriathlonAuthError(_auth_message(status, api_key)) from exc
+        raise
     try:
         payload = resp.json()
     except ValueError:
@@ -265,6 +304,14 @@ def describe(url: str, *, api_key: str | None = None) -> dict:
         resp.raise_for_status()
         payload = resp.json()
     except Exception as exc:
+        status = report.get("status")
+        if status in (401, 403):
+            # Not an error: a 401 is the endpoint confirming it exists and
+            # wants a key. Reporting it as a failure hides the one action that
+            # resolves it behind a red run.
+            report["needs_auth"] = True
+            report["message"] = _auth_message(status, api_key)
+            return report
         report["error"] = f"{type(exc).__name__}: {exc}"
         return report
 

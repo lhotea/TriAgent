@@ -153,6 +153,15 @@ Two deliberate refusals:
   non-JSON body or an unrecognised envelope behaves like a dead feed, so the
   daily post survives the API changing under it.
 
+A probe confirmed the endpoint: `api.triathlon.org/v1/news` answers `401
+Unauthorized` with a JSON content type, which is the API acknowledging it
+exists and wanting a key rather than a wrong URL. **A 401 with no key
+configured is reported as a state, not a failure** — exiting non-zero there
+painted the whole run red and read as "the adapter is broken", burying the one
+action that resolves it. A 401 *with* a key does fail, because that key is
+wrong. The same distinction reaches the daily log, so the line says what to do
+rather than naming a status code.
+
 The response schema was never observable from the development environment,
 whose proxy denies triathlon.org. The mapper therefore accepts the field names
 the plausible shapes use, and `--mode apicheck` reports the real structure —

@@ -87,7 +87,7 @@ Removed from the previous value, with the reason:
 | `completetri.com/feed` | last post 62 days ago |
 | `bettertriathlete.com/feed` | last post 49 days ago |
 | `totaltritraining.com/blog/feed` | parses to zero entries |
-| `tri247.com/feed` | 403 — try the `www.` host as a candidate |
+| `tri247.com/feed` | 403 on both the bare and `www.` host |
 | `triathlon.org/news` | serves HTML advertising no feed |
 
 Three of the five kept feeds are themselves slow (6–9 days), so they only
@@ -103,7 +103,7 @@ list accumulated nine dead entries. Instead, probe candidates first:
 Actions → **feedcheck** → *Run workflow* → paste into **extra_feeds**:
 
 ```
-www.tri247.com/feed, triathlete.com/feed/, slowtwitch.com/feed, trainerroad.com/blog/feed/, triathlonmagazine.ca/feed, witsup.com/feed
+triathlete.com/feed/, slowtwitch.com/feed, trainerroad.com/blog/feed/, triathlonmagazine.ca/feed, witsup.com/feed
 ```
 
 Those are **unverified suggestions** — the workflow is what decides. Candidates
@@ -112,7 +112,7 @@ are probed alongside the live list, marked `[candidate]`, and never added to
 
 ```
 candidates worth adding to FEEDS:
-  https://www.tri247.com/feed (10 entries, newest 3.1h old)
+  https://triathlete.com/feed/ (10 entries, newest 3.1h old)
 ```
 
 Copy the winners into `FEEDS`. Anything not listed there either failed or had
@@ -135,13 +135,24 @@ Any URL on `api.triathlon.org` is fetched as JSON automatically — no separate
 setting. Its stories then get the same treatment as everything else, including
 **governing-body priority**, which floats them to the top of the post.
 
-If the endpoint needs a key, add secret `WORLD_TRIATHLON_API_KEY`; it is sent
-as the `apikey` header. To point at a different endpoint, set variable
-`WORLD_TRIATHLON_ENDPOINT`.
+To point at a different endpoint, set variable `WORLD_TRIATHLON_ENDPOINT`.
 
-**Confirm it before adding it to `FEEDS`.** The feedcheck workflow now ends
-with a *Probe the World Triathlon API* step that prints the real response
-shape:
+**The endpoint is confirmed real and it needs a key.** A probe returned
+`401 Unauthorized` with `content-type: application/json` — not a 404, not an
+HTML error page. That is the API acknowledging it exists and wants
+credentials, so `api.triathlon.org/v1/news` is the right URL and
+`WORLD_TRIATHLON_API_KEY` is the only thing still missing.
+
+Request developer/API access from World Triathlon and add the key as a
+repository **secret** named `WORLD_TRIATHLON_API_KEY`. It is sent as the
+`apikey` header.
+
+Leaving `api.triathlon.org/v1/news` in `FEEDS` without a key is harmless: the
+source contributes nothing, logs one line explaining why, and the rest of the
+run is unaffected. It starts working the moment the secret exists.
+
+**Confirm it with the workflow.** The feedcheck workflow ends with a *Probe the
+World Triathlon API* step that prints the real response shape:
 
 ```
 "articles_found": 12,
@@ -159,7 +170,11 @@ The mapping was written without a reachable host, so read that output rather
 than assuming:
 
 - **`mapping works`** — add `api.triathlon.org/v1/news` to `FEEDS`.
-- **`endpoint unreachable`** — wrong URL, or it needs a key.
+- **`requires authentication (401)`** — expected until the secret is set. The
+  step **passes**: not configured yet is a state, not a failure.
+- **`rejected the key`** — the secret is set but not accepted. This one *does*
+  fail the step; check the key has not expired.
+- **`endpoint unreachable`** — a wrong URL or a network problem.
 - **`found no article list`** — the payload nests articles under a key the
   adapter does not know. The printed top-level keys name it; add it to
   `LIST_KEYS` in `src/triagent/worldtriathlon.py`.
@@ -576,4 +591,4 @@ python -m triagent --mode full --dry-run
 | "Link in bio" goes nowhere | No link set on the Instagram profile — see §5b |
 | Live page shows an old post | Last run was a dry run; gh-pages only updates on a real run |
 | Headline looks wide, not condensed | No condensed font installed; CI adds `fonts-dejavu-extra` |
-| `403 Forbidden` on a feed | Often a bare domain — use the full feed path, e.g. `www.tri247.com/feed` |
+| `403 Forbidden` on a feed | Often a bare domain — use the full feed path. If the full path also 403s, the publisher is blocking GitHub's datacentre IPs and no URL will fix it (tri247 does this on both hosts). |

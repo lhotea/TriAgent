@@ -337,3 +337,154 @@ class TestPipelineIntegration:
             )
         combined = " ".join(i.summary for i in items)
         assert "<b>" not in combined and "stacked" in combined
+
+
+def _http_error(status: int):
+    """A requests.HTTPError carrying a response, as raise_for_status raises."""
+    import requests as req
+
+    resp = MagicMock()
+    resp.status_code = status
+    resp.headers = {"content-type": "application/json"}
+    err = req.HTTPError(f"{status} Client Error", response=resp)
+    m = MagicMock()
+    m.status_code = status
+    m.headers = {"content-type": "application/json"}
+    m.raise_for_status = MagicMock(side_effect=err)
+    return m
+
+
+class TestAuthentication:
+    """401 without a key is a configuration state, not a breakage.
+
+    The endpoint was confirmed real by a 401 with a JSON content type — it
+    exists and wants a key. Reporting that as a failed run is wrong twice
+    over: it reads as "the adapter is broken" when nothing is broken, and it
+    buries the one thing the operator actually has to do.
+    """
+
+    def test_unauthenticated_401_names_the_secret_to_set(self):
+        from triagent.worldtriathlon import WorldTriathlonAuthError, fetch_api
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_http_error(401)):
+            with pytest.raises(WorldTriathlonAuthError) as exc:
+                fetch_api("https://api.triathlon.org/v1/news")
+
+        assert "WORLD_TRIATHLON_API_KEY" in str(exc.value)
+
+    def test_403_is_treated_the_same_way(self):
+        from triagent.worldtriathlon import WorldTriathlonAuthError, fetch_api
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_http_error(403)):
+            with pytest.raises(WorldTriathlonAuthError):
+                fetch_api("https://api.triathlon.org/v1/news")
+
+    def test_a_rejected_key_says_so_rather_than_asking_for_one(self):
+        """Telling someone to set a key they already set is a dead end."""
+        from triagent.worldtriathlon import WorldTriathlonAuthError, fetch_api
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_http_error(401)):
+            with pytest.raises(WorldTriathlonAuthError) as exc:
+                fetch_api("https://api.triathlon.org/v1/news", api_key="wrong")
+
+        assert "rejected" in str(exc.value).lower()
+
+    def test_other_http_errors_are_not_disguised_as_auth(self):
+        import requests as req
+        from triagent.worldtriathlon import WorldTriathlonAuthError, fetch_api
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_http_error(500)):
+            with pytest.raises(req.HTTPError) as exc:
+                fetch_api("https://api.triathlon.org/v1/news")
+        assert not isinstance(exc.value, WorldTriathlonAuthError)
+
+    def test_a_daily_run_survives_the_missing_key(self):
+        """Until a key exists the source must degrade like any dead feed."""
+        from triagent.news import fetch_recent
+
+        def dispatch(url, **kw):
+            if "api.triathlon.org" in url:
+                return _http_error(401)
+            m = MagicMock()
+            m.content = TestPipelineIntegration.RSS
+            m.raise_for_status = MagicMock()
+            m.headers = {"content-type": "application/rss+xml"}
+            m.url = url
+            return m
+
+        with patch("requests.get", side_effect=dispatch):
+            items = fetch_recent(
+                ["https://api.triathlon.org/v1/news", "https://other.example/feed"],
+                max_age_hours=24 * 365,
+            )
+        assert [i.source for i in items] == ["Other"]
+
+
+class TestDescribeAuthReporting:
+    """`--mode apicheck` has to separate 'not set up yet' from 'broken'."""
+
+    def test_unauthenticated_401_is_reported_as_needing_auth(self):
+        from triagent.worldtriathlon import describe
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_http_error(401)):
+            report = describe("https://api.triathlon.org/v1/news")
+
+        assert report["needs_auth"] is True
+        assert report["authenticated"] is False
+
+    def test_401_with_a_key_is_reported_as_a_rejected_key(self):
+        from triagent.worldtriathlon import describe
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_http_error(401)):
+            report = describe("https://api.triathlon.org/v1/news", api_key="wrong")
+
+        assert report["needs_auth"] is True
+        assert report["authenticated"] is True
+
+    def test_a_401_still_confirms_the_endpoint_exists(self):
+        """The status and content type are the evidence the URL is right."""
+        from triagent.worldtriathlon import describe
+
+        with patch("triagent.worldtriathlon.requests.get", return_value=_http_error(401)):
+            report = describe("https://api.triathlon.org/v1/news")
+
+        assert report["status"] == 401
+        assert "json" in report["content_type"]
+
+
+class TestApicheckExitCodes:
+    """The exit code drives whether CI paints the run red."""
+
+    def _run(self, report):
+        import triagent.__main__ as m
+
+        with patch("triagent.worldtriathlon.describe", return_value=report):
+            with patch.object(m.sys, "argv", ["triagent", "--mode", "apicheck"]):
+                return m.main()
+
+    def test_unconfigured_is_not_a_failure(self):
+        assert self._run({
+            "url": "u", "authenticated": False, "needs_auth": True, "status": 401,
+            "message": "set the WORLD_TRIATHLON_API_KEY secret",
+        }) == 0
+
+    def test_a_rejected_key_is_a_failure(self):
+        assert self._run({
+            "url": "u", "authenticated": True, "needs_auth": True, "status": 401,
+            "message": "the key was rejected",
+        }) == 1
+
+    def test_a_report_without_a_message_does_not_crash(self):
+        """describe() always sets one, but a partial report must not KeyError."""
+        assert self._run({
+            "url": "u", "authenticated": False, "needs_auth": True, "status": 401,
+        }) == 0
+
+    def test_a_working_mapping_passes(self):
+        assert self._run({
+            "url": "u", "authenticated": True, "articles_found": 3,
+            "mapped": {"title": "t", "url": "https://triathlon.org/news/x"},
+        }) == 0
+
+    def test_an_unreachable_endpoint_is_a_failure(self):
+        assert self._run({"url": "u", "authenticated": False, "error": "boom"}) == 1

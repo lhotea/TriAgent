@@ -32,7 +32,8 @@ ASSETS_DIR.mkdir(exist_ok=True)
 # extra_feeds input) and add only what comes back live.
 #
 # Also absent: triathlon.org/news, which serves HTML advertising no feed, and
-# tri247.com/feed, which returns 403 without a www host.
+# tri247.com/feed, which returns 403 to GitHub's runners on both the bare
+# and the www host — it blocks the IP range, so no URL variant helps.
 DEFAULT_FEEDS = [
     "https://220triathlon.com/feed/atom",
     "https://atriathletesdiary.com/blog/feed",

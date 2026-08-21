@@ -185,6 +185,16 @@ def main() -> int:
         if report.get("error"):
             print(f"\nendpoint unreachable: {report['error']}", file=sys.stderr)
             return 1
+        if report.get("needs_auth"):
+            # Not configured yet is a state, not a failure. Exiting non-zero
+            # here painted the whole feedcheck run red and read as "the
+            # adapter is broken", when in fact the 401 is the endpoint
+            # confirming it exists and wants a key — the most useful result
+            # the probe can return short of success.
+            print("\n" + report.get("message", "authentication required"))
+            if report.get("authenticated"):
+                return 1  # a key was sent and refused: that IS a failure
+            return 0
         if not report.get("articles_found"):
             print(
                 "\nreached the endpoint but found no article list. The keys "
