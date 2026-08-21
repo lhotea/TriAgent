@@ -275,6 +275,21 @@ and produced three duplicate posts.
 To deliberately allow a story again, delete its entry from `posted.json` on the
 `gh-pages` branch.
 
+### Checking the feed list
+
+Run the **feedcheck** workflow from the Actions tab (`Run workflow`) whenever
+you change `FEEDS`. It probes every URL from GitHub's network — which is the
+only place that matters, since a feed can be reachable from one network and
+blocked from another — and reports for each one:
+
+- `FAIL` with the reason (404, 403, DNS), or
+- `OK` with an entry count and the age of the newest story, plus
+  `via feed link:` when a section URL was followed to the feed it advertises.
+
+It also flags feeds that are *usable but stale* — nothing within ten days.
+Those never reach a post and are the quiet reason a feed list looks longer
+than it is.
+
 ### If posts still look repetitive
 
 Check the build log for the line naming feeds that contributed nothing:
@@ -283,8 +298,10 @@ Check the build log for the line naming feeds that contributed nothing:
 11 feed(s) contributed no items (window 36h): https://…/feed, …
 ```
 
-A feed listed there parses but has no recent stories — either it is a
-low-frequency blog, or the URL points at an HTML page rather than a feed. In
+A feed listed there parses but has no recent stories — most likely a
+low-frequency blog. A URL pointing at a section page rather than a feed
+(`triathlon.org/news`) is now followed to the feed that page advertises, so
+those work without naming a specific feed URL. In
 the current `FEEDS` list only two sources supply stories on a typical day, so
 the pool is thin and the same publisher dominates. Replacing the silent entries
 with higher-volume feeds is what actually broadens the posts; the dedup ledger

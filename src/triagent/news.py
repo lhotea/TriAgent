@@ -6,7 +6,7 @@ import logging
 import re
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import feedparser
 import requests
@@ -47,6 +47,30 @@ def _clean(raw: str) -> str:
 
 
 def _parse_dt(entry) -> dt.datetime:
+    """Read an entry's publication time, in whatever format the feed uses.
+
+    feedparser's `*_parsed` fields are already normalised to a struct_time
+    whatever the source dialect, so they are tried first. Only RFC 822 strings
+    were parsed before, which Atom does not use — it carries ISO 8601
+    ("2026-07-01T10:00:00Z"). Every key therefore fell through to the `now()`
+    fallback, and a seven-week-old story reported an age of zero hours. That
+    disabled the age filter and flattened the recency sort for
+    220triathlon.com/feed/atom, the feed that supplies most of the pool, and
+    made the widening fallback inert: every item already passed every window.
+
+    The `now()` fallback survives for genuinely undated entries, where
+    "assume it is current" is the only useful guess.
+    """
+    for key in ("published_parsed", "updated_parsed", "created_parsed"):
+        struct = entry.get(key)
+        if not struct:
+            continue
+        try:
+            # struct_time from feedparser is always UTC.
+            return dt.datetime(*struct[:6], tzinfo=dt.timezone.utc)
+        except (TypeError, ValueError):
+            continue
+
     for key in ("published", "updated", "created"):
         raw = entry.get(key)
         if not raw:
@@ -88,6 +112,58 @@ def _fetch_feed(feed_url: str) -> feedparser.Feed:
     return feedparser.parse(resp.content)
 
 
+# Types a <link rel="alternate"> must advertise for us to treat it as a feed.
+FEED_LINK_TYPES = (
+    "application/rss+xml",
+    "application/atom+xml",
+    "application/rdf+xml",
+    "application/xml",
+    "text/xml",
+)
+
+
+def _discover_feed_url(parsed: feedparser.Feed, page_url: str) -> str | None:
+    """Find the feed a fetched HTML page advertises, if any.
+
+    A section URL such as triathlon.org/news serves a page, not a feed. The
+    page points at its feed with <link rel="alternate" type="application/
+    rss+xml">, which is what makes it readable without naming a specific feed
+    URL — but feedparser parses that tag without following it, so the fetch
+    returned zero entries and World Triathlon was silently absent from every
+    post despite being the governing body and ranked first when present.
+    """
+    for link in parsed.feed.get("links", []) or []:
+        if link.get("rel") != "alternate":
+            continue
+        if (link.get("type") or "").lower() not in FEED_LINK_TYPES:
+            continue
+        href = link.get("href")
+        if href:
+            # hrefs are routinely relative ("/rss/news").
+            return urljoin(page_url, href)
+    return None
+
+
+def _fetch_feed_resolved(feed_url: str) -> tuple[feedparser.Feed, str]:
+    """Fetch a feed, following one autodiscovery hop if the URL served a page.
+
+    Returns the parsed feed and the URL that actually supplied the entries, so
+    diagnostics can name it. Exactly one hop is followed: a page whose
+    advertised feed is another page is a broken source, not an invitation to
+    recurse.
+    """
+    parsed = _fetch_feed(feed_url)
+    if parsed.entries:
+        return parsed, feed_url
+
+    discovered = _discover_feed_url(parsed, feed_url)
+    if not discovered or discovered == feed_url:
+        return parsed, feed_url
+
+    log.info("%s served a page; following its feed link to %s", feed_url, discovered)
+    return _fetch_feed(discovered), discovered
+
+
 def check_feeds(feed_urls: list[str]) -> list[dict]:
     """Probe each feed and report status, without applying any age filter.
 
@@ -99,11 +175,13 @@ def check_feeds(feed_urls: list[str]) -> list[dict]:
     for feed_url in feed_urls:
         row: dict = {"url": feed_url}
         try:
-            parsed = _fetch_feed(feed_url)
+            parsed, resolved = _fetch_feed_resolved(feed_url)
             entries = parsed.entries or []
             row["ok"] = bool(entries)
             row["entries"] = len(entries)
             row["title"] = parsed.feed.get("title", "")
+            if resolved != feed_url:
+                row["resolved_url"] = resolved
             if entries:
                 newest = max(_parse_dt(e) for e in entries)
                 row["newest_age_hours"] = round(
@@ -208,7 +286,7 @@ def fetch_recent(
 
     for feed_url in feed_urls:
         try:
-            parsed = _fetch_feed(feed_url)
+            parsed, _resolved = _fetch_feed_resolved(feed_url)
             live_feeds += 1
         except Exception as exc:
             log.warning("feed fetch failed for %s: %s", feed_url, exc)

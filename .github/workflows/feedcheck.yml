@@ -1,0 +1,28 @@
+name: feedcheck
+
+# Diagnose the FEEDS list from GitHub's network. Feeds are the one part of
+# this system that cannot be tested locally or in CI fixtures: URLs rot,
+# publishers start blocking bots, and a source that parses but carries nothing
+# recent is invisible in a daily run until the posts start repeating.
+on:
+  workflow_dispatch:
+
+jobs:
+  feedcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install TriAgent
+        run: pip install -e .
+
+      - name: Probe every feed
+        env:
+          FEEDS: ${{ vars.FEEDS }}
+        run: python -m triagent --mode feedcheck

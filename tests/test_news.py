@@ -727,3 +727,165 @@ class TestSilentFeeds:
 
         assert "http://silent/feed" in caplog.text
         assert "contributed no items" in caplog.text
+
+
+class TestAtomDates:
+    """Atom feeds carry ISO 8601 dates; RFC 822 parsing cannot read them.
+
+    `parsedate_to_datetime` rejects "2026-07-01T10:00:00Z", so every key fell
+    through to the `now()` fallback and a seven-week-old story reported an age
+    of zero hours. That silently disabled the age filter and flattened the
+    recency sort for the feed that supplies most of the pool
+    (220triathlon.com/feed/atom), and made the widening fallback a no-op: every
+    item already passed every window.
+    """
+
+    ATOM = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom Feed</title>
+  <entry>
+    <title>Recent story</title>
+    <link href="https://atom.example/recent"/>
+    <published>2026-05-16T09:00:00Z</published>
+  </entry>
+  <entry>
+    <title>Story from six weeks ago</title>
+    <link href="https://atom.example/stale"/>
+    <published>2026-04-01T09:00:00Z</published>
+  </entry>
+</feed>
+"""
+
+    def test_iso_dates_are_read_not_fabricated(self, fake_now):
+        """A dated Atom entry must report its real age, not 'now'."""
+        with patch("triagent.news.requests.get", return_value=_mock_resp(self.ATOM)):
+            items = fetch_recent(["http://atom/feed"], max_age_hours=36)
+
+        assert [i.url for i in items] == ["https://atom.example/recent"], (
+            "the six-week-old entry must be filtered out by the 36h window"
+        )
+        assert items[0].published == dt.datetime(2026, 5, 16, 9, 0, tzinfo=dt.timezone.utc)
+
+    def test_widening_reaches_older_atom_entries(self, fake_now):
+        """If every item claims to be new, widening can never find anything."""
+        with patch("triagent.news.requests.get", return_value=_mock_resp(self.ATOM)):
+            wide = fetch_recent(["http://atom/feed"], max_age_hours=24 * 60)
+
+        assert len(wide) == 2
+
+    def test_rfc822_dates_still_work(self, fake_now):
+        """RSS feeds must keep parsing — most sources are RSS."""
+        with patch("triagent.news.requests.get", return_value=_mock_resp(RSS_FEED_OK)):
+            items = fetch_recent(["http://rss/feed"], max_age_hours=36)
+
+        assert items[0].published == dt.datetime(2026, 5, 16, 10, 0, tzinfo=dt.timezone.utc)
+
+    def test_undated_entry_falls_back_to_now(self, fake_now):
+        """No date at all is the one case where 'assume fresh' is right."""
+        undated = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Undated</title>
+  <entry><title>No date</title><link href="https://atom.example/x"/></entry>
+</feed>
+"""
+        with patch("triagent.news.requests.get", return_value=_mock_resp(undated)):
+            items = fetch_recent(["http://atom/feed"], max_age_hours=36)
+
+        assert len(items) == 1
+
+
+class TestFeedAutodiscovery:
+    """A section URL like triathlon.org/news serves HTML, not a feed.
+
+    The page advertises its feed with a <link rel="alternate"> tag — which is
+    what makes it "readable without a specific URL" — but feedparser does not
+    follow that pointer, so the fetch returned zero entries and the source was
+    silently absent from every post. World Triathlon is the governing body and
+    is meant to lead the post when it has news.
+    """
+
+    PAGE = """<!doctype html><html><head>
+<title>News | World Triathlon</title>
+<link rel="alternate" type="application/rss+xml" title="News" href="/rss/news"/>
+</head><body><h1>News</h1></body></html>"""
+
+    FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>World Triathlon</title>
+<item>
+  <title>Olympic qualification update</title>
+  <link>https://triathlon.org/news/qualification</link>
+  <pubDate>Sat, 16 May 2026 09:00:00 +0000</pubDate>
+</item>
+</channel></rss>
+"""
+
+    def test_follows_the_advertised_feed(self, fake_now):
+        calls = []
+
+        def fake_get(url, **kw):
+            calls.append(url)
+            return _mock_resp(self.FEED if "/rss/" in url else self.PAGE)
+
+        with patch("triagent.news.requests.get", side_effect=fake_get):
+            items = fetch_recent(["https://triathlon.org/news"], max_age_hours=36)
+
+        assert calls == ["https://triathlon.org/news", "https://triathlon.org/rss/news"], (
+            "the relative href must be resolved against the page URL"
+        )
+        assert [i.url for i in items] == ["https://triathlon.org/news/qualification"]
+        assert items[0].source == "World Triathlon"
+
+    def test_discovered_feed_still_counts_as_governing_body(self, fake_now):
+        from triagent.news import is_governing_body
+
+        def fake_get(url, **kw):
+            return _mock_resp(self.FEED if "/rss/" in url else self.PAGE)
+
+        with patch("triagent.news.requests.get", side_effect=fake_get):
+            items = fetch_recent(["https://triathlon.org/news"], max_age_hours=36)
+
+        assert is_governing_body(items[0])
+
+    def test_does_not_follow_when_the_feed_already_parsed(self, fake_now):
+        """A working feed must not cost a second request."""
+        calls = []
+
+        def fake_get(url, **kw):
+            calls.append(url)
+            return _mock_resp(RSS_FEED_OK)
+
+        with patch("triagent.news.requests.get", side_effect=fake_get):
+            fetch_recent(["http://plain/feed"], max_age_hours=36)
+
+        assert len(calls) == 1
+
+    def test_html_without_a_feed_link_fails_cleanly(self, fake_now):
+        bare = "<!doctype html><html><head><title>No feed</title></head><body/></html>"
+        with patch("triagent.news.requests.get", return_value=_mock_resp(bare)):
+            assert fetch_recent(["https://example.com/news"], max_age_hours=36) == []
+
+    def test_only_follows_one_hop(self, fake_now):
+        """A page whose 'feed' is another page must not recurse."""
+        calls = []
+
+        def fake_get(url, **kw):
+            calls.append(url)
+            return _mock_resp(self.PAGE)
+
+        with patch("triagent.news.requests.get", side_effect=fake_get):
+            fetch_recent(["https://triathlon.org/news"], max_age_hours=36)
+
+        assert len(calls) == 2, f"followed {len(calls)} times: {calls}"
+
+    def test_feedcheck_reports_the_discovered_url(self):
+        """The diagnostic must say which URL actually supplied the entries."""
+        from triagent.news import check_feeds
+
+        def fake_get(url, **kw):
+            return _mock_resp(self.FEED if "/rss/" in url else self.PAGE)
+
+        with patch("triagent.news.requests.get", side_effect=fake_get):
+            row = check_feeds(["https://triathlon.org/news"])[0]
+
+        assert row["ok"] and row["entries"] == 1
+        assert row.get("resolved_url") == "https://triathlon.org/rss/news"

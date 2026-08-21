@@ -89,6 +89,23 @@ Fetches RSS feeds and returns recent items, newest first, deduplicated by URL.
   220 Triathlon supplies most of the real pool, so this was days away rather
   than hypothetical. The cap now applies after filtering, which is what makes
   the widening fallback actually reach deeper.
+- **Dates are read in whatever dialect the feed uses.** feedparser's
+  `*_parsed` fields are normalised across formats and are tried first. Only
+  RFC 822 strings were parsed before, which Atom does not use — it carries ISO
+  8601. Every key fell through to the `now()` fallback, so a seven-week-old
+  Atom story reported an age of zero hours. That silently disabled the age
+  filter and flattened the recency sort for `220triathlon.com/feed/atom`, the
+  feed supplying most of the pool, and made widening inert: every item already
+  passed every window. The `now()` fallback remains for genuinely undated
+  entries, where "assume current" is the only useful guess.
+- **A section URL is followed to the feed it advertises.** `triathlon.org/news`
+  serves HTML that points at its feed with
+  `<link rel="alternate" type="application/rss+xml">` — which is what makes it
+  readable without naming a specific feed URL. feedparser parses that tag but
+  does not follow it, so the fetch returned zero entries and World Triathlon
+  was absent from every post despite being ranked first when present. Exactly
+  one hop is followed; a page whose advertised feed is another page is a broken
+  source, not an invitation to recurse.
 - **Silent feeds are named in the log.** A feed that parses but yields nothing
   is otherwise invisible: production reported "13/14 feeds reachable" while two
   sources supplied every story and the other eleven contributed zero. Naming

@@ -107,8 +107,25 @@ def main() -> int:
                 else row.get("error", "")
             )
             print(f"{mark} {row['url']}\n     {detail}")
+            # A URL that served a page rather than a feed still works, but the
+            # operator should know which URL actually supplied the entries.
+            if row.get("resolved_url"):
+                print(f"     via feed link: {row['resolved_url']}")
         working = sum(1 for r in rows if r["ok"])
         print(f"\n{working}/{len(rows)} feeds usable")
+        # A feed that yields nothing recent is invisible in a daily run until
+        # the posts start repeating, so call it out here.
+        stale = [
+            r for r in rows
+            if r["ok"] and (r.get("newest_age_hours") or 0) > 240
+        ]
+        if stale:
+            print(
+                "\nusable but stale (nothing within 10 days) — these will never "
+                "reach a post:"
+            )
+            for r in stale:
+                print(f"  {r['url']} (newest {r['newest_age_hours']}h old)")
         return 0 if working else 1
 
     if args.mode == "whoami":
