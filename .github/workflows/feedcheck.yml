@@ -32,3 +32,14 @@ jobs:
           FEEDS: ${{ vars.FEEDS }}
           EXTRA_FEEDS: ${{ inputs.extra_feeds }}
         run: python -m triagent --mode feedcheck
+
+      # Reports the World Triathlon API's actual response shape. The field
+      # mapping was written without a reachable host, so this is how it gets
+      # confirmed. Non-blocking: a failure here must not mask the feed report.
+      - name: Probe the World Triathlon API
+        if: always()
+        continue-on-error: true
+        env:
+          WORLD_TRIATHLON_API_KEY: ${{ secrets.WORLD_TRIATHLON_API_KEY }}
+          WORLD_TRIATHLON_ENDPOINT: ${{ vars.WORLD_TRIATHLON_ENDPOINT }}
+        run: python -m triagent --mode apicheck

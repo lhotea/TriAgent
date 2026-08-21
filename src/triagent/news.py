@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import html as html_mod
 import logging
+import os
 import re
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
@@ -11,6 +12,8 @@ from urllib.parse import urljoin, urlparse
 import feedparser
 import requests
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from .worldtriathlon import fetch_api, is_api_url
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +108,13 @@ class NewsItem:
     reraise=True,
 )
 def _fetch_feed(feed_url: str) -> feedparser.Feed:
+    # World Triathlon publishes JSON, not RSS. The adapter returns feedparser's
+    # shape, so it joins the pipeline here and inherits the age window, the
+    # posted-story ledger, the per-source cap and governing-body priority
+    # rather than needing a parallel path that would have to re-implement them.
+    if is_api_url(feed_url):
+        return fetch_api(feed_url, api_key=os.environ.get("WORLD_TRIATHLON_API_KEY"))
+
     # Many publishers reject the default "python-requests/x.y" agent outright —
     # tri247 returns 403 for it. Identify as a normal browser instead.
     resp = requests.get(feed_url, timeout=10, headers=FEED_HEADERS)

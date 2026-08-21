@@ -124,6 +124,44 @@ Fetches RSS feeds and returns recent items, newest first, deduplicated by URL.
 newest-item age per feed, so feed health is diagnosable on demand rather than
 discovered through a failed production run.
 
+### Stage 1b — World Triathlon adapter (`worldtriathlon.py`)
+
+`triathlon.org/news` serves an HTML page advertising no feed, so the governing
+body never reached a post despite `prioritize()` ranking it first. Its news is
+published through a JSON API instead.
+
+**The adapter returns feedparser's shape, not `NewsItem`s.** That is the entire
+design. `fetch_recent` already applies the age window, the posted-story ledger,
+the per-source contribution cap, source diversity and governing-body priority —
+and every one of those has been the site of a real production bug when applied
+in the wrong place. A parallel ingestion path would have to re-implement all of
+them and would drift. Returning a `FeedParserDict` means an API URL enters at
+exactly the same point as an RSS URL and inherits the lot; `news._fetch_feed`
+routes on the host and nothing downstream knows the difference.
+
+Entries carry `published_parsed`, not a date string, because `_parse_dt` reads
+that first — supplying only a string would route through the RFC 822 fallback
+and stamp every article "now", which is precisely the bug that made Atom feeds
+ageless.
+
+Two deliberate refusals:
+
+- **An article with no resolvable URL is dropped, not linked by guess.** An
+  explicit URL field wins; a slug composes deterministically; a bare numeric id
+  does not, and a dead link in the post is worse than one fewer headline.
+- **A schema change degrades to zero entries, never an exception.** A
+  non-JSON body or an unrecognised envelope behaves like a dead feed, so the
+  daily post survives the API changing under it.
+
+The response schema was never observable from the development environment,
+whose proxy denies triathlon.org. The mapper therefore accepts the field names
+the plausible shapes use, and `--mode apicheck` reports the real structure —
+top-level keys, article keys, what mapped, and what did not — so the mapping is
+settled by evidence rather than another guess. It runs in the feedcheck
+workflow.
+
+---
+
 ### Stage 2 — Editorial (`summarizer.py`)
 
 One call to Claude Opus 4.7 with adaptive thinking, structured output enforced

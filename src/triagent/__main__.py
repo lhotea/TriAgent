@@ -15,7 +15,7 @@ def main() -> int:
         "--mode",
         choices=[
             "full", "build", "publish", "whoami",
-            "feedcheck", "refresh", "insights",
+            "feedcheck", "apicheck", "refresh", "insights",
         ],
         default="full",
         help=(
@@ -169,6 +169,44 @@ def main() -> int:
             for r in stale:
                 print(f"  {r['url']} (newest {r['newest_age_hours']}h old)")
         return 0 if working else 1
+
+    if args.mode == "apicheck":
+        # The World Triathlon mapping was written without ever seeing a real
+        # response — the development environment cannot reach triathlon.org.
+        # This reports the actual structure so the field mapping is confirmed
+        # or corrected from evidence rather than by another round of guessing.
+        import os
+
+        from .worldtriathlon import DEFAULT_ENDPOINT, describe
+
+        endpoint = os.environ.get("WORLD_TRIATHLON_ENDPOINT") or DEFAULT_ENDPOINT
+        report = describe(endpoint, api_key=os.environ.get("WORLD_TRIATHLON_API_KEY"))
+        print(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        if report.get("error"):
+            print(f"\nendpoint unreachable: {report['error']}", file=sys.stderr)
+            return 1
+        if not report.get("articles_found"):
+            print(
+                "\nreached the endpoint but found no article list. The keys "
+                "above show what came back; add the right one to LIST_KEYS in "
+                "worldtriathlon.py.",
+                file=sys.stderr,
+            )
+            return 1
+        mapped = report.get("mapped", {})
+        missing = [k for k in ("title", "url") if not mapped.get(k)]
+        if missing:
+            print(
+                f"\narticles found, but {', '.join(missing)} could not be mapped. "
+                "Add the real field name(s) to TITLE_KEYS / URL_KEYS / SLUG_KEYS.",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"\nmapping works: {report['articles_found']} article(s), "
+            f"first one resolves to {mapped['url']}"
+        )
+        return 0
 
     if args.mode == "whoami":
         # Setup helper: verify the token and print the account ID for IG_USER_ID.

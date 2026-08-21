@@ -123,6 +123,54 @@ direct URL. Open the page, View Source, and search for `rss` or `feed`; if
 there is a URL, probe it as a candidate. If there is not, they publish through
 an API rather than RSS and it would need a small adapter instead.
 
+### World Triathlon (the governing body)
+
+`triathlon.org/news` is an HTML page with no feed, so it cannot go in `FEEDS`.
+World Triathlon publishes through a JSON API, and the agent has an adapter for
+it. Add the API endpoint to `FEEDS` like any other source:
+
+```
+api.triathlon.org/v1/news
+```
+
+Any URL on `api.triathlon.org` is fetched as JSON automatically — no separate
+setting. Its stories then get the same treatment as everything else, including
+**governing-body priority**, which floats them to the top of the post.
+
+If the endpoint needs a key, add secret `WORLD_TRIATHLON_API_KEY`; it is sent
+as the `apikey` header. To point at a different endpoint, set variable
+`WORLD_TRIATHLON_ENDPOINT`.
+
+**Confirm it before adding it to `FEEDS`.** The feedcheck workflow now ends
+with a *Probe the World Triathlon API* step that prints the real response
+shape:
+
+```
+"articles_found": 12,
+"mapped": {
+  "title": "Paris 2028 qualification criteria confirmed",
+  "url": "https://triathlon.org/news/paris-2028-qualification-criteria-confirmed",
+  "date_parsed": "2026-08-20 09:30:00+00:00"
+},
+"unmapped_keys": ["cover_image", "news_id", "tags"]
+
+mapping works: 12 article(s), first one resolves to https://triathlon.org/news/...
+```
+
+The mapping was written without a reachable host, so read that output rather
+than assuming:
+
+- **`mapping works`** — add `api.triathlon.org/v1/news` to `FEEDS`.
+- **`endpoint unreachable`** — wrong URL, or it needs a key.
+- **`found no article list`** — the payload nests articles under a key the
+  adapter does not know. The printed top-level keys name it; add it to
+  `LIST_KEYS` in `src/triagent/worldtriathlon.py`.
+- **`title, url could not be mapped`** — articles were found but use different
+  field names. `article_keys` lists the real ones; add them to `TITLE_KEYS`,
+  `URL_KEYS` or `SLUG_KEYS`.
+
+`unmapped_keys` is informational — it just lists fields the agent ignores.
+
 ### Reading the report
 
 ```
