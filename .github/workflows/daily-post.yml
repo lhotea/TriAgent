@@ -15,8 +15,11 @@ on:
     # So the run now starts early, builds the post, and holds in the "Wait for
     # the publish slot" step until PUBLISH_AT (default 19:00 Zurich) before
     # anything is published. 11:17 absorbs a start delay of about five and a half
-    # hours in summer and six and a half in winter, which is ~95% of what was
-    # observed. A run that starts later than that simply posts late, as before.
+    # hours in summer and six and a half in winter — 91% and 96% of the delays
+    # measured. A run that starts later than that simply posts late, as before;
+    # one that starts almost on time publishes a little early (the wait is
+    # capped at five hours: about 45 minutes early in summer, an hour and three
+    # quarters in winter).
     #
     # The minute is off :00 on purpose: GitHub documents the top of the hour as
     # the busiest time to be scheduled.
@@ -85,15 +88,18 @@ jobs:
     if: needs.gate.outputs.post == 'true'
     runs-on: ubuntu-latest
     # The run now starts hours before the post and waits for its slot. The
-    # wait is capped at five hours (see MAX_WAIT_SECONDS in schedule.py); the
-    # rest is setup, build, publish and bookkeeping, each with its own limit
-    # below, so a hung step still fails in minutes rather than at this ceiling.
-    # GitHub's hard limit for a job is 360.
+    # wait is capped at five hours (see MAX_WAIT_SECONDS in schedule.py). Every
+    # other step carries its own short limit, so a hung checkout or install
+    # fails in minutes instead of holding this workflow's concurrency group — and
+    # any manual run queued behind it — until this ceiling. GitHub's hard limit
+    # for a job is 360.
     timeout-minutes: 345
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 5
 
       - uses: actions/setup-python@v5
+        timeout-minutes: 5
         with:
           python-version: "3.12"
           cache: pip
@@ -101,24 +107,38 @@ jobs:
       # The headline style depends on a heavy condensed face; without one the
       # renderer falls back to regular bold and the type reads much wider.
       - name: Install fonts and ffmpeg
+        timeout-minutes: 10
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq fonts-dejavu-extra fonts-liberation ffmpeg
 
       - name: Install TriAgent
+        timeout-minutes: 10
         run: pip install -e .
 
       # The ledger of already-posted stories lives on gh-pages. Without pulling
       # it first the run would start from empty and repeat everything — the
       # same failure mode the insights CSV has.
       - name: Fetch posted-story history
+        timeout-minutes: 5
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           mkdir -p assets
-          git fetch origin gh-pages || true
-          if ! git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+          # `git fetch ... || true` read "GitHub could not be reached" as "there is
+          # no gh-pages yet". The run then started from the tracked placeholder
+          # ledger — repeating stories — and its copy later overwrote the real
+          # ledger on the remote. Only a branch that genuinely does not exist
+          # (exit 2) is allowed to mean a first run.
+          rc=0
+          fetch_gh_pages || rc=$?
+          if [ "$rc" -eq 2 ]; then
             echo "gh-pages does not exist yet — no history to fetch"
             exit 0
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "could not read gh-pages; refusing to start from an empty ledger" >&2
+            exit 1
           fi
           if ! git cat-file -e origin/gh-pages:posted.json 2>/dev/null; then
             echo "gh-pages carries no posted.json yet — starting from empty"
@@ -175,31 +195,31 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           test -f assets/daily.png || { echo "card missing"; exit 1; }
-          git fetch origin gh-pages || true
-          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git worktree add -B gh-pages gh-pages-wt origin/gh-pages
-          else
-            git worktree add --orphan -b gh-pages gh-pages-wt
-          fi
-          # Copy by glob, not by literal name. Assets are published under dated
-          # filenames (daily-2026-08-09.png) to defeat CDN caching, and naming
-          # each file explicitly here means a change in the Python has to be
-          # mirrored in this YAML — which is exactly how run #125 published a
-          # card the publisher then waited 300s for and never found.
-          cp assets/daily*.png gh-pages-wt/
-          cp assets/index.html gh-pages-wt/
-          cp assets/daily*.mp4 gh-pages-wt/ 2>/dev/null || true
-          # Fail here rather than letting the publisher discover it 300s later.
-          ls gh-pages-wt/daily-*.png >/dev/null 2>&1 || {
-            echo "no dated card was copied — publish would 404"; exit 1; }
-          ls -1 gh-pages-wt/
-          cd gh-pages-wt
-          git config user.email "actions@github.com"
-          git config user.name "TriAgent Bot"
-          git add -A
-          git commit -m "card: $(date -u +%F)" || echo "no changes"
-          git push origin gh-pages
+          # The worktree is based on a fetch made just now, and the push re-syncs
+          # and retries if another workflow wrote in between. This step used to
+          # fall back to whatever ref had been cached at the start of the job —
+          # hours old, now that the run waits for its slot — and fail with a
+          # rejected push, so the post never went out.
+          open_gh_pages_worktree
+          apply_card() {
+            # Copy by glob, not by literal name. Assets are published under
+            # dated filenames (daily-2026-08-09.png) to defeat CDN caching, and
+            # naming each file explicitly here means a change in the Python has
+            # to be mirrored in this YAML — which is exactly how run #125
+            # published a card the publisher then waited 300s for and never
+            # found. (Runs inside gh-pages-wt, hence the ../assets paths.)
+            cp ../assets/daily*.png .
+            cp ../assets/index.html .
+            cp ../assets/daily*.mp4 . 2>/dev/null || true
+            # Fail here rather than letting the publisher discover it 300s later.
+            ls daily-*.png >/dev/null 2>&1 || {
+              echo "no dated card was copied — publish would 404" >&2
+              return 1
+            }
+          }
+          gh_pages_commit_and_push "card: $(date -u +%F)" apply_card
 
       - name: Publish to Instagram
         if: ${{ !inputs.dry_run }}
@@ -226,42 +246,29 @@ jobs:
         timeout-minutes: 5
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           test -f assets/posted.json || { echo "nothing committed"; exit 0; }
           # Reuse the worktree the publish step created. Git refuses to check
           # the same branch out into two worktrees, so adding a second one here
           # fails with exit 128 — which is exactly what happened on run #133:
           # the post went out and the history was never recorded.
-          if [ ! -d gh-pages-wt ]; then
-            git fetch origin gh-pages || true
-            git worktree add -B gh-pages gh-pages-wt origin/gh-pages
+          open_gh_pages_worktree
+          # The ledger on gh-pages is the BASE; this run's entries are added to
+          # it. Copying the run's file over it is only right if that file holds
+          # everything the published one does — and it does not when the fetch
+          # at the start of the run failed (it held the tracked placeholder), or
+          # when the run waited hours. Copying then shrank a 40-entry ledger to
+          # 4, and the verify step below still reported success.
+          apply_ledger() {
+            python -c "from pathlib import Path; from triagent.history import merge_ledger; merge_ledger(Path('posted.json'), Path('../assets/posted.json'))"
+          }
+          if ! gh_pages_commit_and_push "history: $(date -u +%F)" apply_ledger; then
+            # By now the post is live. Say so, because the obvious reaction to a
+            # red run is "re-run failed jobs", and that would publish again.
+            echo "::error::The post is ALREADY LIVE but its stories were not recorded. Do NOT re-run this job: it would publish again. Add these URLs to posted.json on the gh-pages branch by hand:"
+            python -c "import json; print(chr(10).join(json.load(open('assets/pending.json'))))" || true
+            exit 1
           fi
-          cd gh-pages-wt
-          git config user.email "actions@github.com"
-          git config user.name "TriAgent Bot"
-          # gh-pages has more than one writer (collect-insights pushes there
-          # too), so the remote may have moved since this run pushed the card.
-          # Re-sync to it and apply the ledger on top, rather than pushing a
-          # stale base and being rejected after the post has already gone out.
-          # Everything this run pushed earlier is already on the remote, so the
-          # reset discards nothing.
-          for attempt in 1 2 3 4 5; do
-            git fetch origin gh-pages
-            git reset --hard origin/gh-pages
-            cp ../assets/posted.json posted.json
-            git add posted.json
-            if git diff --cached --quiet; then
-              echo "ledger already up to date"
-              exit 0
-            fi
-            git commit -m "history: $(date -u +%F)"
-            if git push origin gh-pages; then
-              exit 0
-            fi
-            echo "push raced with another writer (attempt ${attempt}); retrying"
-            sleep $((attempt * 3))
-          done
-          echo "could not record the posted stories after 5 attempts" >&2
-          exit 1
 
       # The seam between Python and YAML has now broken three times: run #125
       # (dated files never copied), run #133 (worktree collision), and the
@@ -271,10 +278,12 @@ jobs:
       # that a sequence of green steps produced it.
       - name: Verify the ledger landed on gh-pages
         if: ${{ !inputs.dry_run && success() }}
+        timeout-minutes: 5
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           test -f assets/pending.json || { echo "no stories were selected"; exit 0; }
-          git fetch origin gh-pages
+          fetch_gh_pages
           git show origin/gh-pages:posted.json > "$RUNNER_TEMP/remote-posted.json"
           python - <<'PY'
           import json, os, sys
@@ -292,11 +301,14 @@ jobs:
 
       - name: Upload rendered card
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
           name: daily-card
           path: |
             assets/daily.png
+            assets/daily-*.png
+            assets/post-tag.txt
             assets/caption.txt
             assets/index.html
             assets/daily.mp4
