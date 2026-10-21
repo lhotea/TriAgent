@@ -72,9 +72,15 @@ def assemble_caption(
             f"purchase{suffix} keeps this going."
         )
 
+    # One line asking for the actions that carry weight. Saves and sends to a
+    # friend are what Instagram treats as "this was worth keeping", and 58 posts
+    # earned no saves at all — so the ask is specific, and the follow request is
+    # folded into it rather than being a fourth separate prompt.
     handle = brand_handle.strip()
     if handle:
-        parts += ["", f"Into triathlon? Follow {handle}"]
+        parts += ["", f"Save this, send it to a training partner, and follow {handle} for more."]
+    else:
+        parts += ["", "Save this, and send it to a training partner."]
 
     # A small tag set, not a wall. Reference accounts at scale use almost none;
     # a handful still helps discovery for an account that is still small.

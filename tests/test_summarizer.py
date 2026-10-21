@@ -319,3 +319,103 @@ def test_build_brief_raises_when_both_models_fail(sample_news_items):
 
         # Should have been called twice: primary + fallback
         assert mock_client.messages.parse.call_count == 2
+
+class TestLeadStoryFields:
+    """Slides 2 and 3 are the lead story's facts and meaning, so the model must supply them."""
+
+    def _kwargs(self, **over):
+        base = dict(
+            hook="Short hook", hook_emphasis="Short", image_query="runner at dawn",
+            headlines=[
+                Headline(title="One", one_liner="Why", source="S", source_url="https://e/1"),
+                Headline(title="Two", one_liner="Why", source="S", source_url="https://e/2"),
+                Headline(title="Three", one_liner="Why", source="S", source_url="https://e/3"),
+            ],
+            takeaways=["A fact."], implication="Check your plan.",
+            caption_body="Body", engagement_prompt="Q?", hashtags=[f"t{i}" for i in range(6)],
+        )
+        base.update(over)
+        return base
+
+    def test_valid_brief(self):
+        brief = DailyBrief(**self._kwargs(takeaways=["One.", "Two.", "Three."]))
+        assert len(brief.takeaways) == 3
+
+    def test_takeaways_are_required_and_bounded(self):
+        with pytest.raises(Exception):
+            DailyBrief(**self._kwargs(takeaways=[]))  # slide 2 would be empty
+        with pytest.raises(Exception):
+            DailyBrief(**self._kwargs(takeaways=["a", "b", "c", "d"]))  # more than fits
+        kwargs = self._kwargs()
+        del kwargs["takeaways"]
+        with pytest.raises(Exception):
+            DailyBrief(**kwargs)
+
+    def test_implication_is_required(self):
+        kwargs = self._kwargs()
+        del kwargs["implication"]
+        with pytest.raises(Exception):
+            DailyBrief(**kwargs)
+
+    def test_both_are_in_the_schema_the_model_is_given(self):
+        schema = DailyBrief.model_json_schema()
+        assert {"takeaways", "implication"} <= set(schema["required"])
+
+    def test_the_new_fields_follow_headlines_so_the_lead_is_chosen_first(self):
+        order = list(DailyBrief.model_json_schema()["properties"])
+        assert order.index("headlines") < order.index("takeaways") < order.index("implication")
+
+
+class TestPromptRules:
+    """The prompt cannot be unit-tested for quality, but its guard rails can be pinned."""
+
+    def test_forbids_first_person(self):
+        """The 23 Aug post turned a 220 Triathlon writer's 'I signed up for an AI coach'
+        into 'I hired an AI coach for 8 weeks' under the account owner's name."""
+        from triagent.summarizer import SYSTEM_PROMPT
+
+        text = SYSTEM_PROMPT.lower()
+        assert "never write in the first person" in text
+        assert "report it as that writer's experience" in text
+
+    def test_forbids_invented_facts(self):
+        from triagent.summarizer import SYSTEM_PROMPT
+
+        text = SYSTEM_PROMPT.lower()
+        assert "must come from the summaries you were given" in text
+        assert "fewer takeaways rather than padding" in text
+
+    def test_describes_the_three_slide_structure(self):
+        from triagent.summarizer import SYSTEM_PROMPT
+
+        assert "three slides" in SYSTEM_PROMPT
+        assert "`takeaways`" in SYSTEM_PROMPT and "`implication`" in SYSTEM_PROMPT
+
+    def test_allows_addressing_the_reader_only_where_true(self):
+        from triagent.summarizer import SYSTEM_PROMPT
+
+        assert "never force it" in SYSTEM_PROMPT.lower()
+
+    def test_the_model_sees_enough_of_each_summary_to_state_real_facts(self):
+        """The takeaways may only use what is shown, so a thin excerpt invites padding."""
+        import datetime as dt
+
+        from triagent.news import NewsItem
+        from triagent.summarizer import SUMMARY_CHARS
+
+        assert SUMMARY_CHARS >= 600
+        item = NewsItem(
+            title="T", summary="a" * 300 + "b" * (SUMMARY_CHARS - 300) + "c" * 200,
+            url="https://e/x", source="S", published=dt.datetime.now(dt.timezone.utc),
+        )
+        client = MagicMock()
+        client.messages.parse.return_value = MagicMock(
+            parsed_output=MagicMock(headlines=[], hashtags=[]), stop_reason="end_turn"
+        )
+        with patch("triagent.summarizer.anthropic.Anthropic", return_value=client):
+            Summarizer(api_key="k").build_brief([item], brand_name="B")
+        prompt = client.messages.parse.call_args.kwargs["messages"][0]["content"]
+        # The excerpt is the line just above the url: exactly SUMMARY_CHARS long.
+        excerpt = prompt.split("https://e/x")[0].rstrip().splitlines()[-1].strip()
+        assert excerpt == "a" * 300 + "b" * (SUMMARY_CHARS - 300)
+        assert "lead story" in prompt and "only source" in prompt

@@ -172,3 +172,33 @@ class TestCtaLine:
         from triagent.monetization import _cta
 
         assert "()" not in _cta("   ", has_affiliate=False)
+
+
+class TestSaveAndSendAsk:
+    """Saves and sends are the actions Instagram weighs; none of 58 posts earned a save."""
+
+    def test_asks_for_a_save_and_a_send(self, sample_brief):
+        caption = assemble_caption(sample_brief, affiliate_urls=[], brand_handle="@testbrand")
+        assert "Save this" in caption
+        assert "training partner" in caption
+
+    def test_follow_request_is_part_of_the_same_line(self, sample_brief):
+        """One ask, not a fourth separate prompt after the question and the link."""
+        caption = assemble_caption(sample_brief, affiliate_urls=[], brand_handle="@testbrand")
+        line = next(l for l in caption.splitlines() if "Save this" in l)
+        assert "@testbrand" in line
+        assert "Into triathlon?" not in caption
+
+    def test_without_a_handle_it_still_asks_and_leaves_nothing_dangling(self, sample_brief):
+        caption = assemble_caption(sample_brief, affiliate_urls=[], brand_handle="  ")
+        line = next(l for l in caption.splitlines() if "Save this" in l)
+        assert line == "Save this, and send it to a training partner."
+        assert "follow" not in line.lower()
+
+    def test_the_ask_comes_after_the_question_and_before_the_hashtags(self, sample_brief):
+        caption = assemble_caption(sample_brief, affiliate_urls=[], brand_handle="@testbrand")
+        assert (
+            caption.index(sample_brief.engagement_prompt)
+            < caption.index("Save this")
+            < caption.index("#triathlon")
+        )

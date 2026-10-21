@@ -184,3 +184,122 @@ class TestSlides:
         from triagent.image import CTA_TEXT
 
         assert "TRIATHLON NEWS" in CTA_TEXT
+
+
+class TestLeadStorySlides:
+    """The hook is a promise; slides 2 and 3 have to keep it for the same story."""
+
+    @staticmethod
+    def _drawn(monkeypatch, render):
+        """Every string the renderer draws, in order, joined by spaces."""
+        from PIL import ImageDraw
+
+        seen: list[str] = []
+        real = ImageDraw.ImageDraw.text
+
+        def spy(self, xy, text, *args, **kwargs):
+            seen.append(str(text))
+            return real(self, xy, text, *args, **kwargs)
+
+        monkeypatch.setattr(ImageDraw.ImageDraw, "text", spy)
+        render()
+        return " ".join(seen)
+
+    def _slide(self, brief, index, tmp_assets_dir, **kw):
+        from triagent.image import render_slide
+
+        return render_slide(brief, index, "Brand", tmp_assets_dir / f"s{index}.png", **kw)
+
+    def test_slide_two_states_the_leads_facts_and_credits_the_source(
+        self, monkeypatch, tmp_assets_dir, sample_brief
+    ):
+        text = self._drawn(monkeypatch, lambda: self._slide(sample_brief, 1, tmp_assets_dir))
+        assert "THE DETAILS" in text
+        for fact in sample_brief.takeaways:
+            assert fact.split()[0] in text and fact.split()[-1] in text
+        assert "SOURCE: TRIATHLETE" in text  # headlines[0].source, the lead story's
+        # ...and does NOT spend the slide on a different story, as it used to.
+        assert "TRI-SUIT" not in text.upper() and "ITU" not in text
+
+    def test_slide_three_says_what_it_means_and_asks_for_a_save(
+        self, monkeypatch, tmp_assets_dir, sample_brief
+    ):
+        from triagent import image
+
+        ctas = []
+        real = image._draw_footer
+        monkeypatch.setattr(
+            image, "_draw_footer",
+            lambda *a, **k: (ctas.append(k.get("cta_text")), real(*a, **k))[1],
+        )
+        text = self._drawn(monkeypatch, lambda: self._slide(sample_brief, 2, tmp_assets_dir))
+        assert "WHAT IT MEANS FOR YOU" in text
+        assert "Kona" in text and "run" in text
+        assert ctas == [image.SAVE_CTA_TEXT]
+        assert "SAVE" in image.SAVE_CTA_TEXT and "TRAINING PARTNER" in image.SAVE_CTA_TEXT
+
+    def test_slide_two_keeps_the_link_in_bio_footer(self, monkeypatch, tmp_assets_dir, sample_brief):
+        from triagent import image
+
+        ctas = []
+        real = image._draw_footer
+        monkeypatch.setattr(
+            image, "_draw_footer",
+            lambda *a, **k: (ctas.append(k.get("cta_text")), real(*a, **k))[1],
+        )
+        self._slide(sample_brief, 1, tmp_assets_dir)
+        assert ctas == [image.CTA_TEXT]
+
+    def test_without_takeaways_the_original_layout_is_used(
+        self, monkeypatch, tmp_assets_dir, sample_brief
+    ):
+        """A brief from before this change, or a model that returned none, must still render."""
+        old = sample_brief.model_copy(update={"takeaways": [], "implication": ""})
+        text = self._drawn(monkeypatch, lambda: self._slide(old, 1, tmp_assets_dir))
+        assert "THE DETAILS" not in text
+        assert "TRI-SUIT" in text.upper()  # headlines[1], as before
+
+    def test_without_an_implication_slide_three_falls_back_to_the_next_story(
+        self, monkeypatch, tmp_assets_dir, sample_brief
+    ):
+        brief = sample_brief.model_copy(update={"implication": "  "})
+        text = self._drawn(monkeypatch, lambda: self._slide(brief, 2, tmp_assets_dir))
+        assert "WHAT IT MEANS" not in text
+        assert "TRI-SUIT" in text.upper()  # headlines[1] fills the slide the sentence could not
+
+    def test_extra_slides_carry_the_supporting_stories_in_order(
+        self, monkeypatch, tmp_assets_dir, sample_brief
+    ):
+        """With four slides, slide 4 is the first *other* story, not a repeat of the lead."""
+        text = self._drawn(monkeypatch, lambda: self._slide(sample_brief, 3, tmp_assets_dir))
+        assert "TRI-SUIT" in text.upper()
+        assert "THE DETAILS" not in text
+
+    def test_a_long_takeaway_still_fits(self, tmp_assets_dir, sample_brief):
+        from PIL import Image
+
+        long_fact = " ".join(["Kemenz"] * 40)
+        brief = sample_brief.model_copy(update={"takeaways": [long_fact] * 3})
+        path = self._slide(brief, 1, tmp_assets_dir)
+        with Image.open(path) as img:
+            assert img.size == (1080, 1350)
+            # The footer band stays clear of body text: sample a strip just above the mark.
+            strip = img.crop((0, 1350 - 150 + 10, 1080, 1350 - 150 + 20)).convert("L")
+            assert strip.getextrema() == (0, 0)
+
+    def test_renders_at_reel_size(self, tmp_assets_dir, sample_brief):
+        from PIL import Image
+
+        from triagent.image import REEL_H, REEL_W
+
+        for index in (1, 2):
+            path = self._slide(sample_brief, index, tmp_assets_dir, size=(REEL_W, REEL_H))
+            with Image.open(path) as img:
+                assert img.size == (REEL_W, REEL_H)
+
+    def test_all_three_slides_render_through_render_slides(self, tmp_assets_dir, sample_brief):
+        from triagent.image import render_slides
+
+        paths = render_slides(sample_brief, "Brand", tmp_assets_dir, "daily-x", count=3)
+        assert [p.name for p in paths] == ["daily-x-1.png", "daily-x-2.png", "daily-x-3.png"]
+        assert all(p.stat().st_size > 1000 for p in paths)

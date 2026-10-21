@@ -43,7 +43,10 @@ class DailyBrief(BaseModel):
             "The headline printed large on the image AND the first caption line. "
             "8-14 words. Written to be read in ALL CAPS at poster size, so favour "
             "short punchy words. State the specific claim — name the athlete, race "
-            "or brand. No emojis, no clickbait vagueness like 'you won't believe'."
+            "or brand. Where the story really changes something for the reader, "
+            "address them ('your off-season hour...'). Never first person: no I, "
+            "my, we or our. No emojis, no clickbait vagueness like 'you won't "
+            "believe'."
         ),
     )
     hook_emphasis: str = Field(
@@ -70,7 +73,33 @@ class DailyBrief(BaseModel):
         ...,
         min_length=3,
         max_length=5,
-        description="Ranked by audience value. Most engaging first.",
+        description=(
+            "Ranked by audience value. Most engaging first. The FIRST headline is "
+            "the lead story: the hook, takeaways and implication are all about it."
+        ),
+    )
+    takeaways: List[str] = Field(
+        ...,
+        min_length=1,
+        max_length=3,
+        description=(
+            "The facts of the LEAD story, for the second slide: one per line, most "
+            "important first, each under 14 words. Use ONLY facts stated in that "
+            "story's summary — names, numbers, dates, outcomes. If the summary "
+            "holds fewer than three distinct facts, give fewer; never pad, estimate, "
+            "round up or infer a figure. Not first person."
+        ),
+    )
+    implication: str = Field(
+        ...,
+        description=(
+            "For the third slide: one sentence, under 25 words, on what the lead "
+            "story means for an age-group triathlete — a decision it changes or "
+            "something worth checking. Say 'you' where that is natural. It must "
+            "follow from the takeaways, add no new facts and promise no results "
+            "('may be worth checking your fuelling plan', never 'will make you "
+            "faster'). Not first person."
+        ),
     )
     caption_body: str = Field(
         ...,
@@ -117,6 +146,12 @@ The hook is printed across the bottom of the image in enormous condensed capital
 three lines or so, and it is also the first line of the caption. It has to work at \
 poster size and at thumbnail size. Short, hard words beat long soft ones.
 
+The carousel has three slides and all three are about that one story. Slide 1 is the \
+hook. Slide 2 is its facts (`takeaways`). Slide 3 is what it means for an age-group \
+triathlete (`implication`). Someone who stops at slide 3 should have the whole story \
+and something worth keeping, so write the takeaways and the implication as lines a \
+reader could screenshot. A swipe has to pay off: never spend a slide on a different story.
+
 ## Voice
 
 Write in plain declarative English. State what happened, then state what it means.
@@ -129,6 +164,11 @@ billion dollar chip plant" lands; "a major new investment" does not.
 Do not use hype adjectives (incredible, amazing, game-changing, insane), do not use \
 emoji in the body, do not use marketing cadence, do not address the reader as "guys" \
 or "fam". Never open with "Did you know".
+
+Speak to the reader when the story really does change something for them. "Your \
+off-season hour decides next July" is a hook that does; a pro's contract extension is \
+not. Use "you" and "your" in the hook and the implication when it is true, and keep the \
+story in the third person when it is not. Never force it.
 
 The tone is a well-informed person telling you something interesting over coffee. Not \
 a brand. Not a newsletter. Not a press release.
@@ -146,12 +186,37 @@ with a real tradeoff, gear that changes outcomes, pro rivalries, rule changes pe
 will argue about. Avoid sponsorship announcements and minor product news — nobody \
 argues about those, and arguments are reach.
 
+Saves and sends outweigh likes. A story that gives the reader something to keep or to \
+forward to a training partner beats one that is merely interesting.
+
+## What you may and may not claim
+
+These rules override style.
+
+Never write in the first person. No "I", "my", "we" or "our" anywhere: hook, caption, \
+takeaways, implication. This is a real person's account, and a first-person line claims \
+an experience that belongs to someone else. When a source is itself written in the first \
+person ("I signed up for an AI coach"), report it as that writer's experience: "A 220 \
+Triathlon writer tried an AI coach for eight weeks."
+
+Every name, number, date and result must come from the summaries you were given. Do not \
+add detail from memory, do not round a figure up, do not turn "reportedly" into fact. If \
+the summary does not say it, the post does not either. When a summary is thin, write \
+fewer takeaways rather than padding them.
+
+Takeaways say what the source reports. The implication may point a reader at a decision \
+or a thing to check, but it adds no new facts and promises no results: "may be worth \
+checking your fuelling plan", never "this will make you faster".
+
 ## The question at the end
 
 End with a question a real person would answer in one line. It should be answerable \
 from experience, not knowledge — "where does your off-season hour go" beats "who do \
 you think wins Kona". Comments compound reach far more than likes."""
 
+
+# How much of each story's summary the model is shown.
+SUMMARY_CHARS = 700
 
 # Use the alias, not a dated snapshot. "claude-sonnet-4-5-20251001" was invalid:
 # 20251001 is the Haiku 4.5 snapshot date, so that ID would 404 — and only on
@@ -169,9 +234,12 @@ class Summarizer:
         if not items:
             raise ValueError("no news items to summarize")
 
+        # The takeaways may only use facts that appear here, so a thin excerpt
+        # pushes the model toward padding them. 700 characters rather than 400
+        # gives the lead story enough to state two or three real facts.
         bullets = "\n".join(
             f"- [{i.source}]{' [GOVERNING BODY]' if is_governing_body(i) else ''} "
-            f"{i.title}\n  {i.summary[:400]}\n  {i.url}"
+            f"{i.title}\n  {i.summary[:SUMMARY_CHARS]}\n  {i.url}"
             for i in items
         )
         user_prompt = (
@@ -179,7 +247,10 @@ class Summarizer:
             f"Raw triathlon headlines from the last 36 hours (already deduped, newest first):\n\n"
             f"{bullets}\n\n"
             "Produce the structured brief. Pick the 3-5 stories with the highest "
-            "engagement potential for an Instagram audience of triathletes and aspirants."
+            "engagement potential for an Instagram audience of triathletes and aspirants. "
+            "The first headline you rank is the lead story: the hook, the takeaways and "
+            "the implication are all about it, and its summary above is the only source "
+            "for the takeaways."
         )
 
         # Common kwargs shared between primary and fallback calls.

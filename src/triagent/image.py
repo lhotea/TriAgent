@@ -29,6 +29,11 @@ IMAGE_FRACTION = 0.58
 # what earns the tap.
 CTA_TEXT = "MORE TRIATHLON NEWS \u2192 LINK IN BIO"
 
+# The last slide of the lead story's run asks for the actions Instagram weighs
+# most. Likes are cheap; a save or a send to a friend is a signal that the post
+# was worth keeping, and none of 58 posts earned a single save.
+SAVE_CTA_TEXT = "SAVE THIS \u00b7 SEND TO A TRAINING PARTNER"
+
 # Height kept clear at the bottom of every slide for the mark and CTA pill.
 FOOTER_BAND = 150
 
@@ -362,6 +367,7 @@ def _draw_footer(
     *,
     show_cta: bool = True,
     size: tuple[int, int] | None = None,
+    cta_text: str = CTA_TEXT,
 ) -> None:
     """Brand mark bottom-left, CTA pill centred. Shared by every slide."""
     w, h = size or (W, H)
@@ -374,18 +380,100 @@ def _draw_footer(
     # Shrink to fit rather than overflow — the wording matters more than the size.
     size = 26
     font = _load_font(size, bold=True)
-    while size > 16 and draw.textlength(CTA_TEXT, font=font) > w - 2 * MARGIN - 150:
+    while size > 16 and draw.textlength(cta_text, font=font) > w - 2 * MARGIN - 150:
         size -= 2
         font = _load_font(size, bold=True)
 
-    tw = draw.textlength(CTA_TEXT, font=font)
+    tw = draw.textlength(cta_text, font=font)
     pill_w, pill_h = tw + 52, 52
     px = (w - pill_w) / 2
     py = h - MARGIN - 46
     draw.rounded_rectangle(
         [px, py, px + pill_w, py + pill_h], radius=26, outline=TEXT, width=2
     )
-    draw.text((px + 26, py + (pill_h - size) / 2 - 3), CTA_TEXT, fill=TEXT, font=font)
+    draw.text((px + 26, py + (pill_h - size) / 2 - 3), cta_text, fill=TEXT, font=font)
+
+
+def _has_details(brief: DailyBrief) -> bool:
+    return any((t or "").strip() for t in getattr(brief, "takeaways", None) or [])
+
+
+def _has_meaning(brief: DailyBrief) -> bool:
+    """Slide 3 needs both halves: facts for slide 2 to set up, a sentence to land."""
+    return _has_details(brief) and bool((getattr(brief, "implication", "") or "").strip())
+
+
+def _draw_details(draw: ImageDraw.ImageDraw, brief: DailyBrief, w: int, h: int) -> None:
+    """Slide 2: the lead story's facts, numbered, with the publication credited.
+
+    The hook on slide 1 makes a promise. This is where it is kept — the previous
+    layout spent slide 2 on a different story, so a reader who swiped for more of
+    "FLAVOUR FATIGUE IS WRECKING YOUR LONG-COURSE FUELLING" was handed a memorial
+    piece, and had no reason to swipe again or to keep the post.
+    """
+    draw.text(
+        (MARGIN, MARGIN + 110), "THE DETAILS", fill=ACCENT, font=_load_font(30, bold=True)
+    )
+
+    top = MARGIN + 190
+    bottom = h - FOOTER_BAND - 70  # leaves a line for the source credit
+    indent = 120
+    max_width = w - 2 * MARGIN - indent
+    gap = 46
+    items = [t.strip() for t in brief.takeaways if (t or "").strip()][:3]
+
+    # Largest type at which every fact fits, as the headline fitter does: sized
+    # down from big, because the point is that it reads at thumbnail distance.
+    for size in range(58, 33, -2):
+        font = _load_font(size, bold=True, condensed=True)
+        wrapped = [_wrap(draw, t, font, max_width) for t in items]
+        line_h = int(size * 1.2)
+        height = sum(len(lines) for lines in wrapped) * line_h + gap * (len(items) - 1)
+        if height <= bottom - top and all(len(lines) <= 4 for lines in wrapped):
+            break
+
+    num_font = _load_font(max(size + 18, 60), bold=True, condensed=True)
+    y = top
+    for n, lines in enumerate(wrapped, start=1):
+        draw.text((MARGIN, y - 6), f"{n:02}", fill=ACCENT, font=num_font)
+        for line in lines[:4]:
+            draw.text((MARGIN + indent, y), line, fill=TEXT, font=font)
+            y += line_h
+        y += gap
+
+    source = (brief.headlines[0].source if brief.headlines else "").strip()
+    if source:
+        draw.text(
+            (MARGIN, bottom + 14),
+            f"SOURCE: {source.upper()}",
+            fill=ACCENT,
+            font=_load_font(26, bold=True),
+        )
+
+
+def _draw_meaning(draw: ImageDraw.ImageDraw, brief: DailyBrief, w: int, h: int) -> None:
+    """Slide 3: what the story means for the reader, as one large sentence."""
+    draw.text(
+        (MARGIN, MARGIN + 110),
+        "WHAT IT MEANS FOR YOU",
+        fill=ACCENT,
+        font=_load_font(30, bold=True),
+    )
+
+    top = MARGIN + 200
+    bottom = h - FOOTER_BAND - 40
+    text = brief.implication.strip()
+    for size in range(80, 39, -4):
+        font = _load_font(size, bold=True, condensed=True)
+        lines = _wrap(draw, text, font, w - 2 * MARGIN)
+        line_h = int(size * 1.15)
+        if len(lines) * line_h <= bottom - top and len(lines) <= 9:
+            break
+
+    y = top
+    for line in lines:
+        draw.text((MARGIN, y), line, fill=TEXT, font=font)
+        y += line_h
 
 
 def render_slide(
@@ -398,11 +486,17 @@ def render_slide(
 ) -> Path:
     """Render one carousel slide.
 
-    Slide 0 is the lead: photo band plus the oversized two-tone hook. Later
-    slides carry one story each — a large index, the headline, and the
-    one-liner — on black. Keeping the photo to the first slide is deliberate:
-    reusing the same image behind every slide reads as padding, and the
-    supporting stories are quicker to scan as type.
+    Slide 0 is the lead: photo band plus the oversized two-tone hook.
+
+    When the brief carries ``takeaways`` the rest of the carousel stays with that
+    one story: slide 2 states its facts, slide 3 says what it means for the
+    reader and asks for a save or a send. A hook is a promise, and the swipe has
+    to keep it.
+
+    Any slide beyond those — or every slide, for a brief without takeaways — is
+    the older layout, one other story each: a large index, the headline and the
+    one-liner, on black. Keeping the photo to the first slide is deliberate:
+    reusing the same image behind every slide reads as padding.
     """
     w, h = size or (W, H)
 
@@ -415,14 +509,29 @@ def render_slide(
     img = Image.new("RGB", (w, h), BLACK)
     draw = ImageDraw.Draw(img)
 
-    headlines = brief.headlines[1:]
-    story = headlines[index - 1] if index - 1 < len(headlines) else None
+    details = _has_details(brief)
+    meaning = _has_meaning(brief)
+    show_details = index == 1 and details
+    show_meaning = index == 2 and meaning
+
+    # Which "other story" this slide is, when it is one. Slides taken by the lead
+    # story's own run do not consume a supporting headline. With no takeaways
+    # this reduces to the original mapping: slide n shows headlines[n].
+    taken_before = (1 if details and index > 1 else 0) + (1 if meaning and index > 2 else 0)
+    other = 1 + (index - 1) - taken_before
+    story = brief.headlines[other] if other < len(brief.headlines) else None
 
     brand_font = _load_font(30, bold=True)
     draw.text((MARGIN, MARGIN + 8), brand_name.upper(), fill=TEXT, font=brand_font)
     draw.line([(MARGIN, MARGIN + 62), (w - MARGIN, MARGIN + 62)], fill=ACCENT, width=3)
 
-    if story is not None:
+    cta_text = CTA_TEXT
+    if show_details:
+        _draw_details(draw, brief, w, h)
+    elif show_meaning:
+        _draw_meaning(draw, brief, w, h)
+        cta_text = SAVE_CTA_TEXT
+    elif story is not None:
         num_font = _load_font(150, bold=True, condensed=True)
         draw.text((MARGIN, MARGIN + 110), f"{index + 1:02}", fill=ACCENT, font=num_font)
 
@@ -445,7 +554,9 @@ def render_slide(
         src_font = _load_font(26, bold=True)
         draw.text((MARGIN, y + 20), story.source.upper(), fill=ACCENT, font=src_font)
 
-    _draw_footer(img, draw, brand_name, logo, show_cta=True, size=(w, h))
+    _draw_footer(
+        img, draw, brand_name, logo, show_cta=True, size=(w, h), cta_text=cta_text
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(out_path, format="PNG", optimize=True)
