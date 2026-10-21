@@ -398,6 +398,13 @@ post. That is what `POST_FORMAT=reel` now produces.
 `POST_FORMAT` defaults to `carousel` (3 slides). Set `image` for a single card,
 or `reel` for video. `CAROUSEL_SLIDES` overrides the slide count (2-10).
 
+The three slides all belong to the one lead story: slide 1 is the hook, slide 2
+its facts (with the publication credited), slide 3 what it means for an
+age-group triathlete, with a footer asking the reader to save it or send it to a
+training partner. Slides beyond the third, if you ask for more, are the
+supporting stories in rank order. A brief with no takeaways falls back to the
+older layout, where every slide after the first was a different story.
+
 The brand mark comes from `assets/images/logo.png`. Replace that file to change
 it — the dark backing plate is keyed out automatically, and only the dominant
 shape is used, so surrounding artwork is ignored.
@@ -478,12 +485,24 @@ can only stop repeats, it cannot invent variety.
 ## 7b. Performance tracking
 
 Runs automatically — no setup beyond the Instagram credentials you already
-have. The `collect-insights` workflow runs daily at 09:00 UTC (the morning after the
-17:00 post, giving it overnight to accumulate), pulls per-post metrics, and publishes them to:
+have. The `collect-insights` workflow runs daily (scheduled for 09:00 UTC, which
+GitHub starts hours late — see §10), pulls per-post metrics, and publishes them to:
 
 ```
 https://<your-username>.github.io/<RepoName>/insights.csv
+https://<your-username>.github.io/<RepoName>/account.csv
 ```
+
+`account.csv` is the one that says whether the audience is growing. It has one
+row a day: **followers**, following and post count, then trailing-7-day reach
+and views with the share of each that came from **people who do not follow yet**
+(the number that matters for growth — feed posts mostly reach existing
+followers; Reels are what reach strangers), plus profile views, accounts engaged
+and interactions. The run summary prints the follower change over 7 and 30 days.
+The follower count is a plain profile field and dependable; the other columns use
+Instagram Insights metrics that vary by account, and any that Meta refuses are
+left **blank** (never zero) and named in the run log. Check the first run's
+summary to see which were accepted.
 
 Recent posts are re-polled every run because insights keep moving for a few
 days; a post checked an hour after publishing is not final.
@@ -554,21 +573,46 @@ caption never promises what isn't configured.
 
 Actions → **daily-post** → **Run workflow**. Leave `dry_run` unchecked to post.
 
-The schedule is **17:00 UTC** daily (19:00 CEST / 18:00 BST / 13:00 EDT).
+**When it posts** is decided by three repository variables (Settings → Secrets
+and variables → Actions → Variables), all optional:
 
-There is no universal best time — the honest answer is whenever *your*
-followers are online, and only this account's own data can say. 17:00 UTC is a
-reasoned default for a European-leaning triathlon audience: evening, after the
-session. It replaces 13:00 UTC, which landed mid-afternoon CEST.
+| Variable | Default | Meaning |
+|---|---|---|
+| `POST_DAYS` | `Wed,Fri,Sat` | weekdays that post; `daily` for every day. A typo **fails the run** rather than silently meaning "never" or "every day" |
+| `PUBLISH_AT` | `19:00` | 24-hour local time the post goes out |
+| `POST_TZ` | `Europe/Zurich` | time zone for the two above — daylight saving is handled |
 
-To change it, edit the `cron` line in `.github/workflows/daily-post.yml`.
-GitHub cron is always UTC, so convert from local time first, and remember that
-UK/EU offsets shift twice a year.
+The defaults leave Sunday, Monday and Tuesday evenings free: in this account's
+Instagram Insights those are when followers are most active (18-21h Sun/Mon,
+21-00h Tue), and the posts that earned reactions were the ones made by hand.
+Look at *your* Insights → Audience → "Follower active times" and set
+`PUBLISH_AT` accordingly; the Wed-Sat peaks were not visible when the defaults
+were chosen.
 
-> A fixed time cannot be evaluated from its own data — every post shares it, so
-> nothing distinguishes a good hour from a bad one. The insights CSV now records
-> `published_hour_utc` and `weekday`, so rotating the schedule across two or
-> three candidate hours would let the numbers settle it.
+**The cron line is not the posting time.** GitHub starts scheduled runs late —
+measured over 47 posts here, a median of 3.0 hours, 4.8 at the 90th percentile
+and 8.3 at worst — so a cron set to the posting hour put half the posts after
+22:00 local time. The workflow now starts at 11:17 UTC, builds the post, and the
+*Wait for the publish slot* step holds until `PUBLISH_AT` before anything is
+published. 11:17 absorbs a start delay of about five and a half hours (summer) to
+six and a half (winter); a later start simply posts late, as before. If you move
+`PUBLISH_AT` more than an hour or two, move the cron with it.
+
+Things that follow from the run holding for hours:
+
+- A day off shows as a **skipped** run, not a failed one.
+- **Manual runs ignore `POST_DAYS` and never wait** — they post at once. Use
+  `dry_run` to build without publishing.
+- Only one live run at a time. A manual run started while a scheduled one is
+  holding queues behind it, so the same stories cannot be posted twice. Dry runs
+  are not queued.
+- A build failure (an empty story pool, a blocked feed) now appears around
+  midday rather than at posting time.
+
+> The insights CSV records `published_hour_utc` and `weekday`. With the time now
+> controlled, rotating `PUBLISH_AT` across two or three slots for a few weeks
+> would let the numbers say which works best — but at a few dozen views a post,
+> expect to need many weeks.
 
 ### Local
 
@@ -597,6 +641,7 @@ python -m triagent --mode full --dry-run
 | 5b | Link added to Instagram bio | Instagram app | ✅ or the CTA dead-ends |
 | 6 | `GH_PAT` | Secret | ✅ beyond 60 days |
 | 7 | `POST_FORMAT`, `REEL_AUDIO` | Variables | only for Reels |
+| 7 | `POST_DAYS`, `PUBLISH_AT`, `POST_TZ` | Variables | optional (defaults: Wed,Fri,Sat · 19:00 · Europe/Zurich) |
 | 8 | `PEXELS_API_KEY` | Secret | strongly recommended |
 | 8 | `IMAGE_GEN_API_KEY` | Secret | optional, paid |
 | 8 | `assets/backgrounds/*` | Repo | optional fallback |

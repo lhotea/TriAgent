@@ -226,7 +226,9 @@ identification and debate over neutral reporting — and produces:
 | `hook` | The headline set large on the card *and* the first caption line |
 | `hook_emphasis` | Substring of `hook` rendered in accent colour — the story's subject |
 | `image_query` | The scene the picture should show, as a concrete 3–8 word description |
-| `headlines[]` | 3–5 rewritten for Instagram, ranked, juiciest first, each with its `source_url` |
+| `headlines[]` | 3–5 rewritten for Instagram, ranked, juiciest first, each with its `source_url`. The first is the lead story |
+| `takeaways[]` | 1–3 facts of the lead story for slide 2, only from its summary — fewer rather than padded |
+| `implication` | One sentence for slide 3: what the lead story means for an age-group triathlete |
 | `caption_body` | 4–7 paragraphs, one sentence each |
 | `engagement_prompt` | A question answerable from experience, not knowledge |
 | `hashtags[]` | 6–10 only. A wall of 25 reads as spam. |
@@ -234,6 +236,19 @@ identification and debate over neutral reporting — and produces:
 The prompt bans hype adjectives, marketing cadence and emoji in the body, and
 demands concrete detail — numbers, names, times, money — because that is what
 distinguishes the reference accounts from generic brand output.
+
+**What the account may claim** is its own prompt section and overrides style,
+because this is a real person's account. No first person anywhere: on 23 Aug the
+bot turned a 220 Triathlon writer's "I signed up for an AI training coach..." into
+"I hired an AI coach for 8 weeks. Here's what broke." and published it under the
+owner's name, so a first-person source is now reported as that writer's
+experience. Every name, number, date and result must come from the summaries the
+model is shown (700 characters each — takeaways may only use what is shown, and a
+thin excerpt invites padding); the implication may point at a decision but adds
+no facts and promises no results. The reader is addressed ("your off-season
+hour...") only where the story really changes something for them — in this
+account's data such hooks drew a reaction in 4 of 10 posts against 6 of 48, which
+is suggestive, not conclusive.
 
 Falls back to Sonnet 4.5 if Opus is unavailable.
 
@@ -273,11 +288,19 @@ With no photo the layout collapses (a 58% black band above the headline just
 reads as empty), so the card switches to a headline-led composition using the
 full canvas.
 
-Posts are **carousels of 3 slides** by default. Slide 1 is the lead — photo
-band plus the two-tone hook. Slides 2 and 3 carry one supporting story each as
-type on black: large index, headline, one-liner, source. Keeping the photo to
-the first slide is deliberate; repeating one image behind every slide reads as
-padding, and supporting stories scan faster as type.
+Posts are **carousels of 3 slides** by default, all about the one lead story.
+Slide 1 is the lead — photo band plus the two-tone hook. Slide 2 states its facts
+(`takeaways`, numbered, with the publication credited). Slide 3 says what it
+means for the reader (`implication`) and its footer asks for a save or a send to a
+training partner. Keeping the photo to the first slide is deliberate; repeating
+one image behind every slide reads as padding.
+
+This replaced a layout where slides 2 and 3 were two *other* stories. The hook
+makes a promise, and a swipe that returned a memorial piece and "17 no-bake
+Christmas treats" broke it: nothing was worth swiping for or keeping, and 58
+carousels earned no saves. The older layout remains as the fallback for a brief
+without takeaways, and for any slide beyond the lead story's own three
+(supporting stories, in rank order).
 
 The brand mark is the real logo from `assets/images/logo.png`. That file is
 RGBA but fully opaque — the mark sits on a dark plate — so pasting it straight
@@ -309,9 +332,12 @@ this code should make on someone's behalf.
 
 ### Stage 4 — Caption assembly (`monetization.py`)
 
-Hook → body → engagement prompt → CTA → optional affiliate line → follow
-prompt → hashtags, with blank lines throughout. The body arrives already
-split into one-sentence paragraphs, matching the reference's airy rhythm.
+Hook → body → engagement prompt → CTA → optional affiliate line → one closing
+line asking the reader to save the post, send it to a training partner and follow
+→ hashtags, with blank lines throughout. The body arrives already split into
+one-sentence paragraphs, matching the reference's airy rhythm. The closing ask is
+a single line because saves and sends are what Instagram weighs most, and a
+fourth separate prompt after the question and the link would dilute it.
 
 The CTA never promises what isn't configured: no "gear picks" without affiliate
 URLs, no empty `()` without a brand handle. Captions are capped at Instagram's
@@ -459,6 +485,56 @@ Metric availability varies by media type, account and creation date — Meta
 retired `impressions` and `plays` for newer posts — and one unsupported metric
 fails the whole call, so the request degrades to a core set. Nothing here
 raises: losing a day of numbers must not affect posting.
+
+#### Stage 8b — Audience (`account.py`)
+
+Per-post numbers say which posts did well; they cannot say whether the audience
+is growing, which is what the posts are for. Over the 90 days to 20 Oct the
+Instagram dashboard showed +0 net followers (6 follows, 6 unfollows) across 58
+automated posts and 151 followers — and nothing in the repo could have shown it.
+`--mode insights` therefore also writes `account.csv`, one row a day.
+
+- **Raw snapshots, derived changes.** The 7- and 30-day change is computed when
+  read, so a skipped day costs a gap rather than a wrong delta in the file.
+- **Trailing 7 days for the flow metrics.** A day's reach here is a few dozen
+  people; a window also sidesteps whichever day boundary the API uses.
+- **Blank, never zero.** Meta answers an uncomputable metric with an empty array.
+- **The non-follower share of reach and views** is the growth number: feed posts
+  were seen almost only by existing followers, Reels reached strangers.
+- **Follower count is dependable; the Insights metrics are best-effort.** The
+  count is a plain profile field. Metric and breakdown names could not be checked
+  against Meta's reference from the development environment (the host is
+  unreachable there), so both spellings of the breakdown are tried, one metric
+  per request, and the run summary names whichever were refused.
+- It runs after the per-post collection and cannot fail the run or cost it.
+
+### Stage 8c — Schedule (`schedule.py`, `daily-post.yml`)
+
+GitHub starts scheduled runs late: over 47 posts the median start was 3.0h after
+the cron time (p90 4.8h, worst 8.3h), so half the posts went out after 22:00
+Zurich time, outside every window in which followers are active, and every post
+shared the same late slot so the data could never say whether the hour mattered.
+
+So the cron is a *start* signal. The run starts early, builds, and holds until
+`PUBLISH_AT` before publishing; a `gate` job skips non-posting days (`POST_DAYS`).
+The arithmetic lives in Python rather than shell because the Python/YAML seam has
+failed three times already and daylight-saving subtraction is where a shell bug
+would hide longest — both clock-change days are tested.
+
+Holding for hours creates hazards that did not exist when build-to-publish took
+minutes, each handled deliberately:
+
+- **gh-pages has two writers** (`daily-post` and `collect-insights`). Every write
+  by `daily-post` now happens after the wait, and the ledger push re-syncs and
+  retries. Without that the push is rejected *after the post is live*, leaving the
+  story unrecorded and free to be posted again — verified against a local bare
+  repository with the original script.
+- **Two live runs must not overlap**, or both would pick the same stories. A
+  concurrency group queues them; dry runs get their own group.
+- **A bad variable must fail early.** `POST_DAYS`, `POST_TZ` and `PUBLISH_AT` are
+  validated at the gate, hours before a post is due.
+- The wait is capped (5h) so the run always has time to publish inside GitHub's
+  6-hour job limit; each working step keeps its own short timeout.
 
 ---
 
