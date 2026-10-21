@@ -115,6 +115,18 @@ def main() -> int:
         merged = merge_rows(csv_path, collect_rows(client, limit=args.insights_limit))
         write_csv(csv_path, merged)
         print(summarise(merged))
+
+        # The follower count and audience figures. Kept apart from the per-post
+        # numbers above, which are already on disk: this part leans on Insights
+        # metrics that vary by account and API version, and a failure here must
+        # not cost the post-level collection — or fail the run.
+        try:
+            from .account import record_snapshot
+
+            print()
+            print(record_snapshot(client, settings.image_path.with_name("account.csv")))
+        except Exception as exc:
+            print(f"account snapshot failed: {exc}", file=sys.stderr)
         return 0
 
     if args.mode == "refresh":
