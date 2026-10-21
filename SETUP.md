@@ -594,9 +594,12 @@ measured over 47 posts here, a median of 3.0 hours, 4.8 at the 90th percentile
 and 8.3 at worst — so a cron set to the posting hour put half the posts after
 22:00 local time. The workflow now starts at 11:17 UTC, builds the post, and the
 *Wait for the publish slot* step holds until `PUBLISH_AT` before anything is
-published. 11:17 absorbs a start delay of about five and a half hours (summer) to
-six and a half (winter); a later start simply posts late, as before. If you move
-`PUBLISH_AT` more than an hour or two, move the cron with it.
+published. 11:17 absorbs a start delay of about five and a half hours in summer
+(91% of the delays measured) and six and a half in winter (96%); a later start
+simply posts late, as before, and a run that starts almost on time publishes a
+little early, because the wait is capped at five hours (about 45 minutes early in
+summer, an hour and three quarters in winter). If you move `PUBLISH_AT` more than
+an hour or two, move the cron with it.
 
 Things that follow from the run holding for hours:
 
@@ -608,6 +611,18 @@ Things that follow from the run holding for hours:
   are not queued.
 - A build failure (an empty story pool, a blocked feed) now appears around
   midday rather than at posting time.
+- A run that GitHub starts more than 12 hours before its slot — a day's run
+  delayed past local midnight — is skipped by the gate. Left alone it would read
+  as the next weekday and publish at dawn, and that day's own run would then post
+  again.
+- **If *Record posted stories* fails, the post is already live.** The error says
+  so and lists the story URLs. Do not use "Re-run failed jobs": that publishes
+  again. Add the URLs to `posted.json` on the `gh-pages` branch by hand instead.
+- Published files are named `daily-<date>-<time>-N.png` (a tag chosen once at
+  build and kept in `post-tag.txt`), so two posts on the same date — a manual run
+  beside a scheduled one — never share URLs.
+- A dry run's `daily-card` artifact contains all three slides, so you can look at
+  the new layout before it posts.
 
 > The insights CSV records `published_hour_utc` and `weekday`. With the time now
 > controlled, rotating `PUBLISH_AT` across two or three slots for a few weeks

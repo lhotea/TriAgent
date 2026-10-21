@@ -534,7 +534,48 @@ minutes, each handled deliberately:
 - **A bad variable must fail early.** `POST_DAYS`, `POST_TZ` and `PUBLISH_AT` are
   validated at the gate, hours before a post is due.
 - The wait is capped (5h) so the run always has time to publish inside GitHub's
-  6-hour job limit; each working step keeps its own short timeout.
+  6-hour job limit; every other step keeps its own short timeout, so a hung
+  checkout or install cannot hold the concurrency group for hours.
+- **A run delayed past local midnight is skipped** (`STALE_RUN_SECONDS`): started
+  more than 12h before its slot, it would read as the next weekday and publish at
+  dawn, and that day's own run would then post again.
+- **Published names are unique per build.** Date-only names meant two publishes on
+  one date shared URLs, and `wait_for_image` only asks whether the URL answers 200,
+  which the earlier run's file does while Pages still serves the old bytes. The
+  build now chooses a tag (date and time) once, stores it in `post-tag.txt`, and
+  publish reads it back — which also stops a run that holds past 00:00 UTC from
+  looking for the next day's names.
+
+#### gh-pages writes (`.github/scripts/ghpages.sh`)
+
+Independent review found one root cause behind several hazards. Every step that
+touched gh-pages ran `git fetch origin gh-pages || true` and then asked whether
+the remote ref existed, which cannot tell "the branch does not exist yet" from
+"GitHub could not be reached". A network blip was read as a first run: the ledger
+was treated as empty (stories repeat), CSV history was rebuilt from nothing and
+published over the real one (59 rows became 1), or a worktree was based on a ref
+cached hours earlier and the push was rejected so the post never went out.
+
+All of those steps now share one helper. `git ls-remote --exit-code` separates the
+three cases (exists / does not exist / unreachable), and only "does not exist" may
+mean a first run. Writes go through `gh_pages_commit_and_push`, which re-syncs to
+the remote's latest state on every attempt and re-applies the step's own files, so
+a rejected push retries instead of failing after the post is live. Beyond that:
+
+- The ledger is recorded by **merging into** the published one (`merge_ledger`),
+  never by copying the run's file over it; a corrupt published ledger is refused,
+  not overwritten.
+- The CSVs only ever gain rows, so a candidate with fewer lines than the published
+  file is refused — that means history was lost on the way.
+- If recording fails the post is already live, so the error says so and lists the
+  stories; the instinctive "re-run failed jobs" would publish again.
+- The helper checks every command's exit status explicitly. Bash disables `set -e`
+  inside a function called as an `if` condition, which would otherwise swallow a
+  refusal and report "nothing to change".
+
+Verified by running the real `run:` scripts against a local bare repository with
+injected failures (transient and permanent fetch errors, rejected pushes, a remote
+that moved mid-run, a corrupt ledger).
 
 ---
 
