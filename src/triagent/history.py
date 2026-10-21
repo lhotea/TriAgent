@@ -97,3 +97,47 @@ def commit_pending(history_path: Path, pending_path: Path) -> int:
     )
     log.info("committed %d story url(s); %d in history", added, len(used))
     return added
+
+
+def merge_ledger(published: Path, built: Path) -> int:
+    """Write the union of two ledgers into ``published``; returns how many entries ``built`` added.
+
+    The workflow records posted stories by copying the run's ledger over the one
+    on gh-pages. That is only correct if the run's copy contains everything the
+    published one does, and a run can hold hours between starting and recording —
+    long enough for the copy it started from to be stale, or (when the fetch at the
+    start silently failed) to be the tracked placeholder file rather than the real
+    ledger. Copying then replaces the real ledger with a shorter one, after which
+    stories that were already posted are posted again.
+
+    So the published ledger is taken as the base and the run's entries are added
+    to it; where both have a URL the published entry wins, because it carries the
+    date the story was *first* used.
+
+    Parsing the published ledger is strict. `load_used` treats a corrupt ledger as
+    empty so that a post can still be built; here the alternative to raising is
+    overwriting it, and a corrupt-but-recoverable file is not ours to discard.
+    """
+    base: dict = {}
+    if published.exists():
+        base = json.loads(published.read_text(encoding="utf-8"))
+        if not isinstance(base, dict):
+            raise ValueError(f"{published} is not a JSON object; refusing to overwrite it")
+
+    ours = load_used(built)
+    added = {url: meta for url, meta in ours.items() if url not in base}
+    if not added and published.exists():
+        # Leave the file exactly as it is: rewriting it would at best be a
+        # formatting-only commit, and the published bytes are the source of truth.
+        log.info("ledger: nothing to add to the %d published", len(base))
+        return 0
+    merged = {**base, **added}
+
+    published.parent.mkdir(parents=True, exist_ok=True)
+    published.write_text(
+        json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    log.info(
+        "ledger: %d published + %d new -> %d", len(base), len(added), len(merged)
+    )
+    return len(added)

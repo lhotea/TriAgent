@@ -48,6 +48,36 @@ class ImageNotReady(Exception):
     """Raised when an image URL has not yet returned HTTP 200."""
 
 
+def _total_value(data: dict, metric: str) -> dict | None:
+    """Read one ``metric_type=total_value`` row out of an insights response.
+
+    The shape is ``{"data": [{"name": ..., "total_value": {"value": n,
+    "breakdowns": [{"results": [{"dimension_values": ["FOLLOWER"], "value": n}]}]}}]}``.
+    Anything else — an empty ``data`` array (what Meta returns for a metric it
+    cannot compute, rather than a zero), or a row without a value — is None, so
+    that a missing figure is never mistaken for a real zero.
+    """
+    for row in data.get("data") or []:
+        if row.get("name") != metric:
+            continue
+        body = row.get("total_value")
+        if not isinstance(body, dict):
+            continue
+        split: dict[str, int] = {}
+        for breakdown in body.get("breakdowns") or []:
+            for result in breakdown.get("results") or []:
+                dims = result.get("dimension_values") or []
+                if dims and result.get("value") is not None:
+                    split[str(dims[0]).upper()] = result["value"]
+        total = body.get("value")
+        if total is None and split:
+            total = sum(split.values())
+        if total is None:
+            continue
+        return {"total": total, "split": split}
+    return None
+
+
 class InstagramPublisher:
     """Two-step publish via the Instagram content publishing API.
 
@@ -178,6 +208,66 @@ class InstagramPublisher:
                 return out
         log.warning("no insights available for %s (too new, or unsupported)", media_id)
         return {}
+
+    # --- account level -----------------------------------------------------
+    #
+    # Same stance as media_insights: this is observability, so a figure that is
+    # unavailable comes back empty and never raises.
+
+    # Plain profile fields, not Insights metrics — they carry no minimum
+    # audience size, which is what makes the follower count dependable.
+    ACCOUNT_FIELDS = "followers_count,follows_count,media_count"
+
+    # The follower / non-follower split is documented as `follow_type` for the
+    # account's reach, while the newer `views` metric is documented with
+    # `follower_type`. Meta's reference could not be read when this was written,
+    # so both spellings are tried rather than one being trusted.
+    BREAKDOWN_NAMES = ("follow_type", "follower_type")
+
+    def account_profile(self) -> dict:
+        """Followers, following and post count right now, or {} if unreadable."""
+        try:
+            return self._get(self.ig_user_id, fields=self.ACCOUNT_FIELDS)
+        except Exception as exc:
+            log.warning("could not read the account profile: %s", exc)
+            return {}
+
+    def account_metric(
+        self, metric: str, *, since: int, until: int, split: bool = False
+    ) -> dict | None:
+        """One account metric summed over ``since``..``until`` (unix seconds).
+
+        Returns ``{"total": n, "split": {"FOLLOWER": n, "NON_FOLLOWER": n, ...}}``,
+        or None when the API will not give it. ``split`` asks for the
+        follower / non-follower breakdown; if no spelling of it is accepted the
+        plain total is returned with an empty split, which is still useful.
+
+        One metric per request, deliberately. Asking for an unsupported metric
+        or breakdown fails the entire call, so batching would let one unknown
+        name blank every figure.
+        """
+        base = {
+            "metric": metric,
+            "period": "day",
+            "metric_type": "total_value",
+            "since": since,
+            "until": until,
+        }
+        attempts = [dict(base, breakdown=name) for name in self.BREAKDOWN_NAMES] if split else []
+        attempts.append(base)
+
+        last_error: Exception | None = None
+        for params in attempts:
+            try:
+                data = self._get(f"{self.ig_user_id}/insights", **params)
+            except Exception as exc:
+                last_error = exc
+                continue
+            parsed = _total_value(data, metric)
+            if parsed is not None:
+                return parsed
+        log.warning("account metric %s unavailable: %s", metric, last_error or "empty response")
+        return None
 
     def _check_image(self, image_url: str, *, head_unsupported: list[bool]) -> None:
         """Check whether the image URL is reachable; raise ImageNotReady if not."""

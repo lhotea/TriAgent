@@ -3,16 +3,23 @@ name: collect-insights
 # Runs the morning after the daily post, so the newest one has had overnight
 # to accumulate numbers, and re-polls recent posts because insights keep moving
 # for days. Without this, every change to the hook or format is a guess.
+#
+# It also records the account itself — followers, and the share of reach that
+# came from people who do not follow yet — in account.csv. The per-post numbers
+# say which posts did well; only the follower count says whether the audience is
+# actually growing, which is what the posts are for.
 
 on:
   schedule:
-    # 09:00 UTC — 16h after the 17:00 post. Reporting sooner mostly measures
-    # how fast the first few followers happened to open the app.
+    # 09:00 UTC. Reporting sooner mostly measures how fast the first few
+    # followers happened to open the app. (GitHub starts scheduled runs late —
+    # see daily-post.yml — so in practice this lands between midday and the
+    # afternoon, which is later still.)
     - cron: "0 9 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write  # to publish the CSV to gh-pages
+  contents: write  # to publish the CSVs to gh-pages
 
 jobs:
   insights:
@@ -29,18 +36,47 @@ jobs:
       - name: Install TriAgent
         run: pip install -e .
 
-      # The CSV is the accumulated history. Pull the published copy first or
+      # The CSVs are the accumulated history. Pull the published copies first or
       # each run would start from empty and overwrite everything collected so
       # far — the merge is an upsert, but only over rows it can see.
+      #
+      # Each file is staged in a temp dir and moved only once git has produced
+      # it, and a failure stops the run. Redirecting `git show` straight into the
+      # target creates the file *before* git runs, so a failed show leaves a
+      # 0-byte file that reads as "no history yet" — and the next step would then
+      # publish a one-row CSV over months of data. A red run is recoverable; a
+      # wiped history is not.
+      #
+      # Whether gh-pages exists is decided by `git ls-remote --exit-code`, not by
+      # whether a fetch happened to leave a ref behind: `git fetch ... || true`
+      # read "GitHub could not be reached" as "no history yet", and the run then
+      # built its CSVs from nothing and published them over the real ones.
       - name: Fetch existing history
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           mkdir -p assets
-          git fetch origin gh-pages || true
-          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git show origin/gh-pages:insights.csv > assets/insights.csv 2>/dev/null \
-              || echo "no history yet — starting a new file"
-          fi
+          rc=0
+          fetch_gh_pages || rc=$?
+          case "$rc" in
+            0)
+              for name in insights.csv account.csv; do
+                if git cat-file -e "origin/gh-pages:${name}" 2>/dev/null; then
+                  git show "origin/gh-pages:${name}" > "$RUNNER_TEMP/${name}"
+                  mv "$RUNNER_TEMP/${name}" "assets/${name}"
+                else
+                  echo "no ${name} history yet — starting a new file"
+                fi
+              done
+              ;;
+            2)
+              echo "gh-pages does not exist yet — starting new files"
+              ;;
+            *)
+              echo "could not read gh-pages; refusing to start from empty history" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Collect insights
         env:
@@ -49,29 +85,40 @@ jobs:
           IG_API_MODE: ${{ vars.IG_API_MODE || 'instagram_login' }}
         run: python -m triagent --mode insights | tee summary.txt
 
-      - name: Publish CSV to gh-pages
+      - name: Publish CSVs to gh-pages
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           test -f assets/insights.csv || { echo "nothing collected"; exit 1; }
-          git fetch origin gh-pages || true
-          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git worktree add -B gh-pages gh-pages-wt origin/gh-pages
-          else
-            git worktree add --orphan -b gh-pages gh-pages-wt
-          fi
-          cp assets/insights.csv gh-pages-wt/insights.csv
-          cd gh-pages-wt
-          git config user.email "actions@github.com"
-          git config user.name "TriAgent Bot"
-          git add insights.csv
-          git commit -m "insights: $(date -u +%F)" || echo "no changes"
-          git push origin gh-pages
+          open_gh_pages_worktree
+          apply_csvs() {
+            # Runs inside gh-pages-wt, hence the ../assets paths.
+            local name remote_lines local_lines
+            for name in insights.csv account.csv; do
+              [ -f "../assets/${name}" ] || continue
+              # Both files only ever gain rows: posts and days are upserted,
+              # never removed. A candidate with fewer lines than the published
+              # file therefore means history was lost on the way (a fetch that
+              # failed, or two overlapping runs), and publishing it would
+              # destroy the real one. Refuse; a red run is recoverable.
+              if [ -f "${name}" ]; then
+                remote_lines=$(wc -l < "${name}") || return 1
+                local_lines=$(wc -l < "../assets/${name}") || return 1
+                if [ "${local_lines}" -lt "${remote_lines}" ]; then
+                  echo "refusing to publish ${name}: ${local_lines} lines would replace ${remote_lines}" >&2
+                  return 1
+                fi
+              fi
+              cp "../assets/${name}" "${name}" || return 1
+            done
+          }
+          gh_pages_commit_and_push "insights: $(date -u +%F)" apply_csvs
 
       - name: Show ranking in the run summary
         if: always()
         run: |
           {
-            echo '## Post performance'
+            echo '## Post performance and followers'
             echo '```'
             cat summary.txt 2>/dev/null || echo 'no summary produced'
             echo '```'
@@ -81,5 +128,7 @@ jobs:
         if: always()
         with:
           name: insights
-          path: assets/insights.csv
+          path: |
+            assets/insights.csv
+            assets/account.csv
           if-no-files-found: ignore

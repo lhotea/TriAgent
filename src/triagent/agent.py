@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,20 +41,67 @@ class RunResult:
     caption: str
     image_url: str
     media_id: str | None  # None in dry-run / build-only mode
+    # The build's asset tag (see new_tag), so a same-process publish uses the
+    # names the build wrote rather than asking the clock again.
+    tag: str | None = None
 
 
 def _today() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
 
 
+# 2026-10-23-153012 — a date and a time, so the format is checkable.
+_TAG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{6}$")
+
+
+def new_tag() -> str:
+    """A name for this build's published files, unique to the second.
+
+    A date alone is not enough. Two live publishes on one UTC date — a manual
+    run beside a scheduled one, a re-run after a failed publish — would put
+    different slides at the *same* URLs, and wait_for_image only asks whether the
+    URL answers 200, which the previous run's file does. Pages can keep serving
+    the old bytes for minutes after a push (that is the very CDN lag dated
+    filenames were introduced to defeat, commit 6bd4fc3), so Instagram could
+    ingest yesterday's-run slides under today's caption.
+
+    The tag is chosen once, at build, and stored (see tag_path): the publish step
+    is a separate process, and asking the clock again there would give a
+    different name if the run held past midnight UTC.
+    """
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+
+
+def tag_path(settings: Settings) -> Path:
+    return settings.image_path.with_name("post-tag.txt")
+
+
+def read_tag(settings: Settings) -> str | None:
+    """The tag the build chose, or None if there isn't a valid one.
+
+    Validated rather than trusted: it ends up in filenames and URLs. None falls
+    back to date-only names, which matches how an older build named its files —
+    and if it doesn't match, publish's file checks fail loudly.
+    """
+    path = tag_path(settings)
+    try:
+        if not path.exists():
+            return None
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value if _TAG_RE.match(value) else None
+
+
 def dated_name(stem: str, suffix: str, when: str | None = None) -> str:
-    """Return e.g. 'daily-2026-08-09.png'.
+    """Return e.g. 'daily-2026-08-09.png', or 'daily-2026-08-09-153012.png' for a tag.
 
     Publishing under a stable filename is a real correctness bug, not just
     untidiness: the URL handed to Meta never changes, so the CDN in front of
     GitHub Pages can answer with yesterday's bytes and Instagram will post the
-    wrong picture. A distinct URL per day removes any chance of that, and
-    leaves a dated archive as a side effect.
+    wrong picture. A distinct URL per post removes any chance of that, and
+    leaves a dated archive as a side effect. `when` is a tag from new_tag();
+    without one it is today's date.
     """
     return f"{stem}-{when or _today()}{suffix}"
 
@@ -65,8 +113,8 @@ def _asset_url(settings: Settings, filename: str) -> str:
     return f"{settings.public_image_base_url}/{filename}"
 
 
-def _image_url(settings: Settings) -> str:
-    return _asset_url(settings, dated_name("daily", ".png"))
+def _image_url(settings: Settings, tag: str | None = None) -> str:
+    return _asset_url(settings, dated_name("daily", ".png", tag))
 
 
 def _stories_for_page(brief, items) -> list:
@@ -107,7 +155,9 @@ def _stories_for_page(brief, items) -> list:
     return stories[:6]
 
 
-def _do_publish(settings: Settings, image_url: str, caption: str) -> str:
+def _do_publish(
+    settings: Settings, image_url: str, caption: str, tag: str | None = None
+) -> str:
     """Shared helper: create publisher, wait for the asset, publish."""
     assert settings.ig_user_id and settings.ig_access_token  # checked by caller
     publisher = InstagramPublisher(
@@ -116,7 +166,7 @@ def _do_publish(settings: Settings, image_url: str, caption: str) -> str:
 
     if settings.post_format == "carousel":
         urls = [
-            _asset_url(settings, f"{dated_name('daily', '')}-{n}.png")
+            _asset_url(settings, f"{dated_name('daily', '', tag)}-{n}.png")
             for n in range(1, settings.carousel_slides + 1)
         ]
         for url in urls:
@@ -125,7 +175,7 @@ def _do_publish(settings: Settings, image_url: str, caption: str) -> str:
         return publisher.publish_carousel(image_urls=urls, caption=caption)
 
     if settings.post_format == "reel":
-        video_url = _asset_url(settings, dated_name("daily", ".mp4"))
+        video_url = _asset_url(settings, dated_name("daily", ".mp4", tag))
         log.info("waiting for video URL to be reachable: %s", video_url)
         publisher.wait_for_image(video_url)
         # Cover frame is the still card, so the feed thumbnail matches the post.
@@ -148,6 +198,10 @@ def build(settings: Settings) -> RunResult:
     """
     settings.require_build_config()
     assert settings.anthropic_api_key  # checked immediately above
+
+    # Chosen once and stored: publish is a separate process, possibly hours later.
+    tag = new_tag()
+    tag_path(settings).write_text(tag + "\n", encoding="utf-8")
 
     # A story is never posted twice. The window overlaps by design, so without
     # this the strongest item simply repeats until it ages out.
@@ -197,7 +251,7 @@ def build(settings: Settings) -> RunResult:
             brief,
             brand_name=settings.brand_name,
             out_dir=settings.image_path.parent,
-            stem=dated_name("daily", "").rstrip("-") or "daily",
+            stem=dated_name("daily", "", tag).rstrip("-") or "daily",
             background=background,
             count=settings.carousel_slides,
         )
@@ -243,11 +297,11 @@ def build(settings: Settings) -> RunResult:
 
     # Dated copies are what actually get published; the undated names stay for
     # artifacts and local inspection.
-    dated_png = settings.image_path.with_name(dated_name("daily", ".png"))
+    dated_png = settings.image_path.with_name(dated_name("daily", ".png", tag))
     dated_png.write_bytes(settings.image_path.read_bytes())
     mp4 = settings.image_path.with_name("daily.mp4")
     if mp4.exists():
-        mp4.with_name(dated_name("daily", ".mp4")).write_bytes(mp4.read_bytes())
+        mp4.with_name(dated_name("daily", ".mp4", tag)).write_bytes(mp4.read_bytes())
 
     # Human-postable fallback, and the link-in-bio destination: card, caption
     # and the day's stories as real links. Ordered by the model's ranking so
@@ -261,7 +315,11 @@ def build(settings: Settings) -> RunResult:
     log.info("caption written to %s", caption_path)
 
     return RunResult(
-        brief=brief, caption=caption, image_url=_image_url(settings), media_id=None
+        brief=brief,
+        caption=caption,
+        image_url=_image_url(settings, tag),
+        media_id=None,
+        tag=tag,
     )
 
 
@@ -277,26 +335,32 @@ def publish_from_build(settings: Settings) -> RunResult:
             f"no rendered card at {settings.image_path}; run build step first"
         )
 
+    # The names the build wrote, not whatever the clock says now: the run may
+    # have held for hours, across a UTC date change.
+    tag = read_tag(settings)
+
     if settings.post_format == "reel":
-        mp4 = settings.image_path.with_name(dated_name("daily", ".mp4"))
+        mp4 = settings.image_path.with_name(dated_name("daily", ".mp4", tag))
         if not mp4.exists():
             raise RuntimeError(f"no rendered reel at {mp4}; run build step first")
 
     if settings.post_format == "carousel":
         for n in range(1, settings.carousel_slides + 1):
-            slide = settings.image_path.with_name(f"{dated_name('daily', '')}-{n}.png")
+            slide = settings.image_path.with_name(f"{dated_name('daily', '', tag)}-{n}.png")
             if not slide.exists():
                 raise RuntimeError(f"no rendered slide at {slide}; run build step first")
 
     settings.require_publish_config()
 
     caption = caption_path.read_text(encoding="utf-8")
-    image_url = _image_url(settings)
+    image_url = _image_url(settings, tag)
 
-    media_id = _do_publish(settings, image_url, caption)
+    media_id = _do_publish(settings, image_url, caption, tag)
     # The post is live, so those stories are now spent.
     commit_pending(HISTORY_PATH, PENDING_PATH)
-    return RunResult(brief=None, caption=caption, image_url=image_url, media_id=media_id)
+    return RunResult(
+        brief=None, caption=caption, image_url=image_url, media_id=media_id, tag=tag
+    )
 
 
 def run(settings: Settings, *, dry_run: bool = False) -> RunResult:
@@ -312,11 +376,12 @@ def run(settings: Settings, *, dry_run: bool = False) -> RunResult:
 
     settings.require_publish_config()
 
-    media_id = _do_publish(settings, result.image_url, result.caption)
+    media_id = _do_publish(settings, result.image_url, result.caption, result.tag)
     commit_pending(HISTORY_PATH, PENDING_PATH)
     return RunResult(
         brief=result.brief,
         caption=result.caption,
         image_url=result.image_url,
         media_id=media_id,
+        tag=result.tag,
     )

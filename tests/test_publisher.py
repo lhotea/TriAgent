@@ -544,3 +544,98 @@ class TestInsightsFetch:
     def test_list_media_handles_empty_account(self, publisher):
         with patch.object(publisher, "_get", return_value={}):
             assert publisher.list_media() == []
+
+
+class TestAccountProfile:
+    def test_reads_the_plain_profile_fields(self, publisher):
+        with patch.object(
+            publisher, "_get",
+            return_value={"followers_count": 151, "follows_count": 327, "media_count": 109},
+        ) as get:
+            assert publisher.account_profile()["followers_count"] == 151
+        # A profile read, not an Insights call: no audience-size minimum applies.
+        get.assert_called_once_with("123", fields="followers_count,follows_count,media_count")
+
+    def test_returns_empty_rather_than_raising(self, publisher):
+        """The follower count failing must not be able to fail the insights run."""
+        with patch.object(publisher, "_get", side_effect=Exception("nope")):
+            assert publisher.account_profile() == {}
+
+
+class TestAccountMetric:
+    """One metric per request, because an unsupported name fails the whole call."""
+
+    SINCE, UNTIL = 1_000, 2_000
+
+    def _plain(self, metric, value):
+        return {"data": [{"name": metric, "total_value": {"value": value}}]}
+
+    def _split(self, metric, total, **parts):
+        results = [{"dimension_values": [k], "value": v} for k, v in parts.items()]
+        return {"data": [{"name": metric, "total_value": {
+            "value": total, "breakdowns": [{"dimension_keys": ["follow_type"], "results": results}],
+        }}]}
+
+    def _call(self, publisher, metric="reach", **kw):
+        return publisher.account_metric(metric, since=self.SINCE, until=self.UNTIL, **kw)
+
+    def test_plain_total(self, publisher):
+        with patch.object(publisher, "_get", return_value=self._plain("profile_views", 12)) as get:
+            assert self._call(publisher, "profile_views") == {"total": 12, "split": {}}
+        path = get.call_args.args[0]
+        params = get.call_args.kwargs
+        assert path == "123/insights"
+        assert params == {
+            "metric": "profile_views", "period": "day", "metric_type": "total_value",
+            "since": 1_000, "until": 2_000,
+        }
+
+    def test_follower_split_is_read_with_upper_cased_keys(self, publisher):
+        resp = self._split("reach", 100, FOLLOWER=80, NON_FOLLOWER=20)
+        with patch.object(publisher, "_get", return_value=resp) as get:
+            out = self._call(publisher, split=True)
+        assert out == {"total": 100, "split": {"FOLLOWER": 80, "NON_FOLLOWER": 20}}
+        assert get.call_args.kwargs["breakdown"] == "follow_type"
+
+    def test_tries_the_other_breakdown_spelling_when_the_first_is_refused(self, publisher):
+        resp = self._split("views", 50, FOLLOWER=40, NON_FOLLOWER=10)
+        get = MagicMock(side_effect=[Exception("unsupported breakdown"), resp])
+        with patch.object(publisher, "_get", get):
+            out = self._call(publisher, "views", split=True)
+        assert out["split"] == {"FOLLOWER": 40, "NON_FOLLOWER": 10}
+        assert [c.kwargs["breakdown"] for c in get.call_args_list] == ["follow_type", "follower_type"]
+
+    def test_falls_back_to_the_plain_total_when_no_breakdown_is_accepted(self, publisher):
+        """A total without the split is still worth recording."""
+        get = MagicMock(side_effect=[Exception("a"), Exception("b"), self._plain("reach", 90)])
+        with patch.object(publisher, "_get", get):
+            out = self._call(publisher, split=True)
+        assert out == {"total": 90, "split": {}}
+        assert "breakdown" not in get.call_args_list[-1].kwargs
+
+    def test_total_is_summed_from_the_split_when_the_api_omits_it(self, publisher):
+        resp = {"data": [{"name": "reach", "total_value": {"breakdowns": [{"results": [
+            {"dimension_values": ["FOLLOWER"], "value": 3},
+            {"dimension_values": ["NON_FOLLOWER"], "value": 1},
+        ]}]}}]}
+        with patch.object(publisher, "_get", return_value=resp):
+            assert self._call(publisher, split=True)["total"] == 4
+
+    def test_empty_data_is_unavailable_not_zero(self, publisher):
+        """Meta answers an uncomputable metric with an empty array. Reading that as 0 would
+        record 'nobody saw it' for a figure that simply was not available."""
+        with patch.object(publisher, "_get", return_value={"data": []}):
+            assert self._call(publisher) is None
+
+    def test_a_row_for_a_different_metric_is_ignored(self, publisher):
+        with patch.object(publisher, "_get", return_value=self._plain("views", 5)):
+            assert self._call(publisher, "reach") is None
+
+    def test_returns_none_rather_than_raising(self, publisher, caplog):
+        with patch.object(publisher, "_get", side_effect=Exception("(#100) unsupported")):
+            assert self._call(publisher, split=True) is None
+        assert any("unsupported" in r.message for r in caplog.records)
+
+    def test_zero_is_a_real_value(self, publisher):
+        with patch.object(publisher, "_get", return_value=self._plain("accounts_engaged", 0)):
+            assert self._call(publisher, "accounts_engaged") == {"total": 0, "split": {}}

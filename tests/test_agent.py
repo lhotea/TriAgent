@@ -315,3 +315,140 @@ class TestStoriesForPage:
 
         items = [_Item(f"t{i}", f"https://e.com/{i}") for i in range(20)]
         assert len(_stories_for_page(_Brief([]), items)) == 6
+
+
+@pytest.fixture()
+def real_settings(tmp_path, monkeypatch):
+    """Real Settings and real files in a temp dir, so naming is tested end to end."""
+    from triagent import agent
+    from triagent.config import Settings
+
+    monkeypatch.setattr(agent, "HISTORY_PATH", tmp_path / "posted.json")
+    monkeypatch.setattr(agent, "PENDING_PATH", tmp_path / "pending.json")
+    return Settings(
+        anthropic_api_key="k", ig_user_id="1", ig_access_token="t",
+        public_image_base_url="https://example.com/site",
+        brand_handle="@x", brand_name="X", image_path=tmp_path / "daily.png",
+    )
+
+
+def _build(settings, items, brief, tag):
+    """build() with the network and the model replaced, everything else real."""
+    with (
+        patch("triagent.agent.fetch_recent_widening", return_value=items),
+        patch("triagent.agent.Summarizer") as summ,
+        patch("triagent.agent.resolve_background", return_value=None),
+        patch("triagent.agent.new_tag", return_value=tag),
+    ):
+        summ.return_value.build_brief.return_value = brief
+        return build(settings)
+
+
+def _publish(settings):
+    """publish_from_build() with Instagram replaced; returns the slide URLs it was given."""
+    with patch("triagent.agent.InstagramPublisher") as pub:
+        pub.return_value.publish_carousel.return_value = "media-1"
+        publish_from_build(settings)
+    return pub.return_value.publish_carousel.call_args.kwargs["image_urls"]
+
+
+class TestAssetTags:
+    """Two publishes on one UTC date must not share URLs, and a run may hold past midnight."""
+
+    def test_tag_has_a_checkable_format(self):
+        import re
+        from triagent.agent import new_tag
+
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}-\d{6}", new_tag())
+
+    def test_every_published_file_carries_the_tag(
+        self, real_settings, sample_news_items, sample_brief, tmp_path
+    ):
+        result = _build(real_settings, sample_news_items, sample_brief, "2026-10-23-110000")
+        names = {p.name for p in tmp_path.iterdir()}
+        assert {
+            "daily-2026-10-23-110000.png",
+            "daily-2026-10-23-110000-1.png",
+            "daily-2026-10-23-110000-2.png",
+            "daily-2026-10-23-110000-3.png",
+            "post-tag.txt",
+        } <= names
+        assert result.tag == "2026-10-23-110000"
+        assert result.image_url == "https://example.com/site/daily-2026-10-23-110000.png"
+        assert "daily-2026-10-23-110000.png" in (tmp_path / "index.html").read_text()
+
+    def test_two_builds_on_one_date_publish_at_different_urls(
+        self, real_settings, sample_news_items, sample_brief
+    ):
+        """A manual run beside a scheduled one must not put new slides at old URLs —
+        wait_for_image only asks whether the URL answers 200, and the old file does."""
+        _build(real_settings, sample_news_items, sample_brief, "2026-10-23-110000")
+        first = _publish(real_settings)
+        _build(real_settings, sample_news_items, sample_brief, "2026-10-23-190000")
+        second = _publish(real_settings)
+        assert first and second
+        assert not set(first) & set(second)
+        assert all("2026-10-23-110000" in u for u in first)
+        assert all("2026-10-23-190000" in u for u in second)
+
+    def test_publish_uses_the_names_the_build_wrote_not_the_clock(
+        self, real_settings, sample_news_items, sample_brief, monkeypatch
+    ):
+        """The run holds for hours between build and publish. If it crosses 00:00 UTC the
+        clock names different files — and publish used to fail with 'no rendered slide'."""
+        from triagent import agent
+
+        _build(real_settings, sample_news_items, sample_brief, "2026-10-22-235800")
+        monkeypatch.setattr(agent, "_today", lambda: "2026-10-23")  # midnight has passed
+        urls = _publish(real_settings)
+        assert all("2026-10-22-235800" in u for u in urls)
+
+    def test_a_tag_file_that_is_not_a_tag_is_ignored(self, real_settings, tmp_path):
+        from triagent.agent import read_tag, tag_path
+
+        for junk in ("", "2026-10-23", "../../etc/passwd", "Test caption", "2026-10-23-11000x"):
+            tag_path(real_settings).write_text(junk)
+            assert read_tag(real_settings) is None, junk
+
+    def test_no_tag_file_means_none(self, real_settings):
+        from triagent.agent import read_tag
+
+        assert read_tag(real_settings) is None
+
+    def test_without_a_tag_names_fall_back_to_the_date(
+        self, real_settings, sample_news_items, sample_brief, tmp_path, monkeypatch
+    ):
+        """A build from before tags existed named its files by date; publish still finds them."""
+        from triagent import agent
+
+        _build(real_settings, sample_news_items, sample_brief, "2026-10-23-110000")
+        (tmp_path / "post-tag.txt").unlink()
+        for n in (1, 2, 3):  # what the older build would have written
+            (tmp_path / f"daily-2026-10-23-110000-{n}.png").rename(tmp_path / f"daily-2026-10-23-{n}.png")
+        monkeypatch.setattr(agent, "_today", lambda: "2026-10-23")
+        assert all(u.endswith(f"daily-2026-10-23-{n}.png") for n, u in enumerate(_publish(real_settings), 1))
+
+    def test_a_missing_slide_still_fails_loudly(
+        self, real_settings, sample_news_items, sample_brief, tmp_path
+    ):
+        _build(real_settings, sample_news_items, sample_brief, "2026-10-23-110000")
+        (tmp_path / "daily-2026-10-23-110000-2.png").unlink()
+        with pytest.raises(RuntimeError, match="no rendered slide"):
+            _publish(real_settings)
+
+    def test_run_publishes_the_names_it_built(
+        self, real_settings, sample_news_items, sample_brief
+    ):
+        with (
+            patch("triagent.agent.fetch_recent_widening", return_value=sample_news_items),
+            patch("triagent.agent.Summarizer") as summ,
+            patch("triagent.agent.resolve_background", return_value=None),
+            patch("triagent.agent.new_tag", return_value="2026-10-23-110000"),
+            patch("triagent.agent.InstagramPublisher") as pub,
+        ):
+            summ.return_value.build_brief.return_value = sample_brief
+            pub.return_value.publish_carousel.return_value = "media-1"
+            result = run(real_settings)
+        urls = pub.return_value.publish_carousel.call_args.kwargs["image_urls"]
+        assert all("2026-10-23-110000" in u for u in urls)
+        assert result.tag == "2026-10-23-110000" and result.media_id == "media-1"

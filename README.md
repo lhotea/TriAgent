@@ -74,8 +74,11 @@ the full URL as `{PUBLIC_IMAGE_BASE_URL}/daily.png`.
 
 ## Scheduling
 
-A GitHub Actions workflow (`.github/workflows/daily-post.yml`) runs the agent
-daily at 13:00 UTC. Add these repo secrets:
+A GitHub Actions workflow (`.github/workflows/daily-post.yml`) builds the post
+early on the days named in `POST_DAYS` (default Wed, Fri, Sat), then holds until
+`PUBLISH_AT` (default 19:00 Zurich time) before publishing. The cron line is
+only a start signal — GitHub starts scheduled runs hours late, so it is set well
+before the posting time. See SETUP.md §10. Add these repo secrets:
 
 - `ANTHROPIC_API_KEY` (required — build fails without it)
 - `IG_USER_ID` (required for publish)
@@ -87,6 +90,13 @@ And these repo variables:
 
 - `BRAND_HANDLE`
 - `BRAND_NAME`
+- `POST_DAYS` (optional — weekdays to post, e.g. `Wed,Fri,Sat`, or `daily`)
+- `PUBLISH_AT` (optional — 24-hour local time, default `19:00`)
+- `POST_TZ` (optional — default `Europe/Zurich`)
+
+Two CSVs are published to the `gh-pages` branch each day: `insights.csv` (how
+each post did) and `account.csv` (followers, and how much reach came from people
+who do not follow yet).
 
 **Full design rationale is in [SPEC.md](SPEC.md); every manual setup step is in
 [SETUP.md](SETUP.md).**
@@ -104,6 +114,9 @@ src/triagent/
 ├── video.py         # ffmpeg Reel encoding
 ├── monetization.py  # caption assembly, affiliate rotation
 ├── publisher.py     # Instagram Graph API two-step publish
+├── insights.py      # per-post performance CSV
+├── account.py       # daily follower / audience snapshot CSV
+├── schedule.py      # which weekdays to post, and when to hold until
 └── __main__.py      # CLI entry
 ```
 

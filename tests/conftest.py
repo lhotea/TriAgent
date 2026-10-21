@@ -117,6 +117,15 @@ def sample_brief():
                 source_url="https://example.com/3",
             ),
         ],
+        takeaways=[
+            "Kemenz won in a sprint finish after eight hours of racing.",
+            "He came out of the swim in 24th place.",
+            "The bike course was shortened because of crosswinds.",
+        ],
+        implication=(
+            "If your race plan assumes a fast swim, Kona is a reminder "
+            "that the day is decided on the run."
+        ),
         caption_body="What a day at Kona! Kemenz showed why they're the favorite. "
         "Also keeping an eye on Speedo's new wetsuit — could change the game.",
         engagement_prompt="Who wins Kona this year?",

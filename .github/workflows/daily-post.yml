@@ -2,23 +2,31 @@ name: daily-post
 
 on:
   schedule:
-    # 17:00 UTC. There is no universal "best time" — the honest answer is
-    # whenever this account's followers are online, which only its own data can
-    # say. This is the best available guess until the insights CSV has enough
-    # rows to settle it:
+    # 11:17 UTC. This is a *start* signal, not the posting time.
     #
-    #   19:00 CEST — European evening, after the session, phone in hand
-    #   18:00 BST  — same, UK
-    #   13:00 EDT  — US east-coast lunch break
+    # GitHub starts scheduled runs late, and by a lot: over 47 posts the median
+    # start was 3.0h after the cron time, the 90th percentile 4.8h and the worst
+    # 8.3h. A cron set to the posting hour therefore put half the posts after
+    # 22:00 Zurich time — outside every window in which this account's followers
+    # are active (Insights: 18-21h Sundays and Mondays, 21-00h Tuesdays) — and
+    # because every post landed in the same late slot, the data could never say
+    # whether the hour mattered.
     #
-    # It replaces 13:00 UTC, which landed at 15:00 CEST: mid-afternoon, the
-    # deadest part of a European weekday.
+    # So the run now starts early, builds the post, and holds in the "Wait for
+    # the publish slot" step until PUBLISH_AT (default 19:00 Zurich) before
+    # anything is published. 11:17 absorbs a start delay of about five and a half
+    # hours in summer and six and a half in winter — 91% and 96% of the delays
+    # measured. A run that starts later than that simply posts late, as before;
+    # one that starts almost on time publishes a little early (the wait is
+    # capped at five hours: about 45 minutes early in summer, an hour and three
+    # quarters in winter).
     #
-    # A fixed time cannot be evaluated from its own data — every post shares it,
-    # so nothing distinguishes a good hour from a bad one. The CSV now records
-    # published_hour_utc and weekday, so rotating this across a few candidate
-    # hours would let the numbers name the winner.
-    - cron: "0 17 * * *"
+    # The minute is off :00 on purpose: GitHub documents the top of the hour as
+    # the busiest time to be scheduled.
+    #
+    # Which days post is POST_DAYS (default Wed,Fri,Sat), a repository variable,
+    # so changing it needs no edit to this file.
+    - cron: "17 11 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -29,10 +37,27 @@ on:
 permissions:
   contents: write  # needed to push rendered card to gh-pages
 
+# Two live runs must never overlap. A run picks its stories at build time and
+# only records them after publishing, and now holds for hours in between — so a
+# second run that built during that hold would choose the same stories and post
+# them again, which is exactly what the ledger exists to prevent. A manual run
+# started during the wait queues behind the scheduled one instead.
+#
+# Dry runs change nothing, so they get their own group and are never queued
+# behind a post that is waiting for its slot.
+concurrency:
+  group: daily-post-${{ inputs.dry_run == true && 'dry' || 'live' }}
+  cancel-in-progress: false
+
 jobs:
-  post:
+  # Decides whether this scheduled run should post today. A job of its own so
+  # that a day off shows as a skipped run rather than a red one, and so that
+  # none of the steps below needs a guard.
+  gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      post: ${{ steps.decide.outputs.post }}
     steps:
       - uses: actions/checkout@v4
 
@@ -41,27 +66,84 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Install TriAgent
+        run: pip install -e .
+
+      # A typo in POST_DAYS / POST_TZ / PUBLISH_AT fails this step, and with it
+      # the run, rather than quietly turning into "never post" or "post daily".
+      # Manual runs always post: they are somebody asking for a post right now.
+      #
+      # CRON is the expression that started this run (empty for a manual run). A
+      # run GitHub starts before that time of day, locally, is the previous day's
+      # run delayed past midnight, and is skipped.
+      - name: Is today a posting day?
+        id: decide
+        env:
+          POST_DAYS: ${{ vars.POST_DAYS }}
+          POST_TZ: ${{ vars.POST_TZ }}
+          PUBLISH_AT: ${{ vars.PUBLISH_AT }}
+          CRON: ${{ github.event.schedule }}
+        run: |
+          set -euo pipefail
+          # stdout is the single `post=...` line; the reason goes to the log.
+          python -m triagent --mode gate >> "$GITHUB_OUTPUT"
+
+  post:
+    needs: gate
+    if: needs.gate.outputs.post == 'true'
+    runs-on: ubuntu-latest
+    # The run now starts hours before the post and waits for its slot. The
+    # wait is capped at five hours (see MAX_WAIT_SECONDS in schedule.py). Every
+    # other step carries its own short limit, so a hung checkout or install
+    # fails in minutes instead of holding this workflow's concurrency group — and
+    # any manual run queued behind it — until this ceiling. GitHub's hard limit
+    # for a job is 360.
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 5
+
+      - uses: actions/setup-python@v5
+        timeout-minutes: 5
+        with:
+          python-version: "3.12"
+          cache: pip
+
       # The headline style depends on a heavy condensed face; without one the
       # renderer falls back to regular bold and the type reads much wider.
       - name: Install fonts and ffmpeg
+        timeout-minutes: 10
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq fonts-dejavu-extra fonts-liberation ffmpeg
 
       - name: Install TriAgent
+        timeout-minutes: 10
         run: pip install -e .
 
       # The ledger of already-posted stories lives on gh-pages. Without pulling
       # it first the run would start from empty and repeat everything — the
       # same failure mode the insights CSV has.
       - name: Fetch posted-story history
+        timeout-minutes: 5
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           mkdir -p assets
-          git fetch origin gh-pages || true
-          if ! git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+          # `git fetch ... || true` read "GitHub could not be reached" as "there is
+          # no gh-pages yet". The run then started from the tracked placeholder
+          # ledger — repeating stories — and its copy later overwrote the real
+          # ledger on the remote. Only a branch that genuinely does not exist
+          # (exit 2) is allowed to mean a first run.
+          rc=0
+          fetch_gh_pages || rc=$?
+          if [ "$rc" -eq 2 ]; then
             echo "gh-pages does not exist yet — no history to fetch"
             exit 0
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "could not read gh-pages; refusing to start from an empty ledger" >&2
+            exit 1
           fi
           if ! git cat-file -e origin/gh-pages:posted.json 2>/dev/null; then
             echo "gh-pages carries no posted.json yet — starting from empty"
@@ -78,7 +160,11 @@ jobs:
           python -c "import json,os; d=json.load(open(os.environ['RUNNER_TEMP']+'/posted.json')); print(f'{len(d)} story url(s) already posted')"
           mv "$RUNNER_TEMP/posted.json" assets/posted.json
 
+      # Built first, hours before the post, so a failure (a dry story pool, a
+      # blocked feed) shows up in the early afternoon while there is time to
+      # react, instead of at the moment the post was due.
       - name: Build card + caption
+        timeout-minutes: 10
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FEEDS: ${{ vars.FEEDS }}
@@ -94,38 +180,60 @@ jobs:
           REEL_SECONDS: ${{ vars.REEL_SECONDS }}
         run: python -m triagent --mode build
 
+      # Hold until the audience is online. Placed AFTER the build and BEFORE the
+      # push to gh-pages on purpose: every write to gh-pages then happens in the
+      # few minutes around publishing. Pushing the card first and waiting
+      # afterwards would leave a worktree hours stale, and the insights workflow
+      # (which also writes gh-pages) would very likely have pushed in between —
+      # so the ledger push at the end would be rejected.
+      #
+      # Only scheduled runs wait; a manual run publishes immediately.
+      - name: Wait for the publish slot
+        if: ${{ !inputs.dry_run }}
+        env:
+          POST_TZ: ${{ vars.POST_TZ }}
+          PUBLISH_AT: ${{ vars.PUBLISH_AT }}
+          # The gate decided "today" when the run started. A run that builds
+          # across local midnight would look at "today" again here and find
+          # tomorrow's slot, so this fails it instead.
+          CRON: ${{ github.event.schedule }}
+        run: python -m triagent --mode wait
+
       - name: Publish card to gh-pages
         if: ${{ !inputs.dry_run }}
+        timeout-minutes: 10
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           test -f assets/daily.png || { echo "card missing"; exit 1; }
-          git fetch origin gh-pages || true
-          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git worktree add -B gh-pages gh-pages-wt origin/gh-pages
-          else
-            git worktree add --orphan -b gh-pages gh-pages-wt
-          fi
-          # Copy by glob, not by literal name. Assets are published under dated
-          # filenames (daily-2026-08-09.png) to defeat CDN caching, and naming
-          # each file explicitly here means a change in the Python has to be
-          # mirrored in this YAML — which is exactly how run #125 published a
-          # card the publisher then waited 300s for and never found.
-          cp assets/daily*.png gh-pages-wt/
-          cp assets/index.html gh-pages-wt/
-          cp assets/daily*.mp4 gh-pages-wt/ 2>/dev/null || true
-          # Fail here rather than letting the publisher discover it 300s later.
-          ls gh-pages-wt/daily-*.png >/dev/null 2>&1 || {
-            echo "no dated card was copied — publish would 404"; exit 1; }
-          ls -1 gh-pages-wt/
-          cd gh-pages-wt
-          git config user.email "actions@github.com"
-          git config user.name "TriAgent Bot"
-          git add -A
-          git commit -m "card: $(date -u +%F)" || echo "no changes"
-          git push origin gh-pages
+          # The worktree is based on a fetch made just now, and the push re-syncs
+          # and retries if another workflow wrote in between. This step used to
+          # fall back to whatever ref had been cached at the start of the job —
+          # hours old, now that the run waits for its slot — and fail with a
+          # rejected push, so the post never went out.
+          open_gh_pages_worktree
+          apply_card() {
+            # Copy by glob, not by literal name. Assets are published under
+            # dated filenames (daily-2026-08-09.png) to defeat CDN caching, and
+            # naming each file explicitly here means a change in the Python has
+            # to be mirrored in this YAML — which is exactly how run #125
+            # published a card the publisher then waited 300s for and never
+            # found. (Runs inside gh-pages-wt, hence the ../assets paths. Errexit
+            # is off in here, so every command that can fail is checked.)
+            cp ../assets/daily*.png . || return 1
+            cp ../assets/index.html . || return 1
+            cp ../assets/daily*.mp4 . 2>/dev/null || true
+            # Fail here rather than letting the publisher discover it 300s later.
+            ls daily-*.png >/dev/null 2>&1 || {
+              echo "no dated card was copied — publish would 404" >&2
+              return 1
+            }
+          }
+          gh_pages_commit_and_push "card: $(date -u +%F)" apply_card
 
       - name: Publish to Instagram
         if: ${{ !inputs.dry_run }}
+        timeout-minutes: 15
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FEEDS: ${{ vars.FEEDS }}
@@ -145,24 +253,32 @@ jobs:
       # run that never posted would shrink the pool for nothing.
       - name: Record posted stories
         if: ${{ !inputs.dry_run && success() }}
+        timeout-minutes: 5
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           test -f assets/posted.json || { echo "nothing committed"; exit 0; }
           # Reuse the worktree the publish step created. Git refuses to check
           # the same branch out into two worktrees, so adding a second one here
           # fails with exit 128 — which is exactly what happened on run #133:
           # the post went out and the history was never recorded.
-          if [ ! -d gh-pages-wt ]; then
-            git fetch origin gh-pages || true
-            git worktree add -B gh-pages gh-pages-wt origin/gh-pages
+          open_gh_pages_worktree
+          # The ledger on gh-pages is the BASE; this run's entries are added to
+          # it. Copying the run's file over it is only right if that file holds
+          # everything the published one does — and it does not when the fetch
+          # at the start of the run failed (it held the tracked placeholder), or
+          # when the run waited hours. Copying then shrank a 40-entry ledger to
+          # 4, and the verify step below still reported success.
+          apply_ledger() {
+            python -c "from pathlib import Path; from triagent.history import merge_ledger; merge_ledger(Path('posted.json'), Path('../assets/posted.json'))"
+          }
+          if ! gh_pages_commit_and_push "history: $(date -u +%F)" apply_ledger; then
+            # By now the post is live. Say so, because the obvious reaction to a
+            # red run is "re-run failed jobs", and that would publish again.
+            echo "::error::The post is ALREADY LIVE but its stories were not recorded. Do NOT re-run this job: it would publish again. Add these URLs to posted.json on the gh-pages branch by hand:"
+            python -c "import json; print(chr(10).join(json.load(open('assets/pending.json'))))" || true
+            exit 1
           fi
-          cp assets/posted.json gh-pages-wt/posted.json
-          cd gh-pages-wt
-          git config user.email "actions@github.com"
-          git config user.name "TriAgent Bot"
-          git add posted.json
-          git commit -m "history: $(date -u +%F)" || echo "no changes"
-          git push origin gh-pages
 
       # The seam between Python and YAML has now broken three times: run #125
       # (dated files never copied), run #133 (worktree collision), and the
@@ -172,10 +288,12 @@ jobs:
       # that a sequence of green steps produced it.
       - name: Verify the ledger landed on gh-pages
         if: ${{ !inputs.dry_run && success() }}
+        timeout-minutes: 5
         run: |
           set -euo pipefail
+          source .github/scripts/ghpages.sh
           test -f assets/pending.json || { echo "no stories were selected"; exit 0; }
-          git fetch origin gh-pages
+          fetch_gh_pages
           git show origin/gh-pages:posted.json > "$RUNNER_TEMP/remote-posted.json"
           python - <<'PY'
           import json, os, sys
@@ -193,11 +311,14 @@ jobs:
 
       - name: Upload rendered card
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
           name: daily-card
           path: |
             assets/daily.png
+            assets/daily-*.png
+            assets/post-tag.txt
             assets/caption.txt
             assets/index.html
             assets/daily.mp4
