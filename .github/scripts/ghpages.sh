@@ -82,6 +82,10 @@ open_gh_pages_worktree() {
 # step owns. If it returns non-zero the whole call fails at once — that is a
 # refusal (for example, a CSV that would shrink), not something to retry.
 #
+# It runs where errexit is off (inside `&&` / `||`), so end every command in it
+# that can fail with `|| return 1`: a `cp` that silently fails would otherwise be
+# pushed as if it had worked.
+#
 # gh-pages has more than one writer (daily-post pushes the card and the ledger,
 # collect-insights pushes the CSVs), so each attempt starts from the remote's
 # latest state and re-applies the step's files on top of it. A rejected push
@@ -90,7 +94,7 @@ open_gh_pages_worktree() {
 # run pushed earlier is already on the remote, and the files being applied are
 # written only by the step that owns them.
 gh_pages_commit_and_push() {
-  local message=$1 apply=$2 attempt rc
+  local message=$1 apply=$2 attempt rc staged
   for attempt in 1 2 3 4 5; do
     rc=0
     fetch_gh_pages || rc=$?
@@ -103,11 +107,21 @@ gh_pages_commit_and_push() {
         ;;
     esac
     (cd gh-pages-wt && "$apply" && git add -A) || return 1
-    if git -C gh-pages-wt diff --cached --quiet; then
+    staged=0
+    git -C gh-pages-wt diff --cached --quiet || staged=1
+    if [ "$staged" -eq 1 ]; then
+      git -C gh-pages-wt commit -q -m "$message" || return 1
+    elif [ "$rc" -eq 0 ] || ! git -C gh-pages-wt rev-parse --verify -q HEAD >/dev/null 2>&1; then
+      # Nothing staged. That means "done" only when we are level with a branch
+      # that exists (rc 0 just reset us to it), or when there is nothing at all.
       echo "gh-pages: nothing to change"
       return 0
     fi
-    git -C gh-pages-wt commit -q -m "$message" || return 1
+    # Reaching here with nothing staged and rc 2 means an earlier attempt
+    # committed to a branch the remote still does not have and its push failed.
+    # That commit is unpushed work, not "nothing to change": push it. Reporting
+    # success here would let a failed first publish pass, and the publisher
+    # would then wait out its timeout on a 404.
     if git -C gh-pages-wt push -q origin gh-pages; then
       return 0
     fi

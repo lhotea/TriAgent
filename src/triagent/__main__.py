@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import logging
 import sys
@@ -33,12 +34,21 @@ def _schedule_mode(mode: str) -> int:
         if not schedule.is_scheduled_run(env):
             print("not a scheduled run: publishing immediately", file=sys.stderr)
             return 0
+        zone = schedule.load_zone(env.get("POST_TZ"))
         waited = schedule.wait_for_publish_time(
             schedule.parse_publish_at(env.get("PUBLISH_AT")),
-            schedule.load_zone(env.get("POST_TZ")),
+            zone,
+            cron_time=schedule.cron_start_time(
+                env.get("CRON"), dt.datetime.now(dt.timezone.utc), zone
+            ),
         )
         print(f"held {waited / 60:.0f} min for the publish slot", file=sys.stderr)
         return 0
+    except schedule.StaleRun as exc:
+        # A failure, not a skip: later steps cannot be skipped from here, and a
+        # red run is the honest record that this day's post did not go out.
+        print(f"stale run: {exc}", file=sys.stderr)
+        return 1
     except ValueError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2

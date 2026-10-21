@@ -536,9 +536,16 @@ minutes, each handled deliberately:
 - The wait is capped (5h) so the run always has time to publish inside GitHub's
   6-hour job limit; every other step keeps its own short timeout, so a hung
   checkout or install cannot hold the concurrency group for hours.
-- **A run delayed past local midnight is skipped** (`STALE_RUN_SECONDS`): started
-  more than 12h before its slot, it would read as the next weekday and publish at
-  dawn, and that day's own run would then post again.
+- **A run delayed past local midnight is skipped** (`started_before_cron`): a run
+  that begins earlier in the local day than its own cron's time is the previous
+  day's, and would read as the next weekday, publish at dawn, and be followed by
+  that day's own run. The gate checks it at the start and the wait step checks it
+  again, because a run can cross midnight while building. The comparison is
+  against the triggering cron (`github.event.schedule`), not the slot: a rule based
+  on how far away the slot is skipped *every* run for anyone whose cron-to-slot
+  span exceeded its limit (America/Chicago at the default slot, for one). A cron
+  the code cannot read lets the run through; a check that cannot be made must not
+  become a missed post.
 - **Published names are unique per build.** Date-only names meant two publishes on
   one date shared URLs, and `wait_for_image` only asks whether the URL answers 200,
   which the earlier run's file does while Pages still serves the old bytes. The
@@ -573,9 +580,21 @@ a rejected push retries instead of failing after the post is live. Beyond that:
   inside a function called as an `if` condition, which would otherwise swallow a
   refusal and report "nothing to change".
 
+A second review found one bug in the helper itself: with no remote branch yet, a
+failed first push left an unpushed local commit, and the next attempt saw "nothing
+staged" and reported success. "Nothing to change" now counts only when level with
+a branch that exists. The apply functions also run where errexit is off, so each
+of their commands is checked explicitly.
+
 Verified by running the real `run:` scripts against a local bare repository with
-injected failures (transient and permanent fetch errors, rejected pushes, a remote
-that moved mid-run, a corrupt ledger).
+injected failures (transient and permanent fetch errors, rejected pushes including
+on a first run, a remote that moved mid-run, a corrupt ledger).
+
+Known limitation, not addressed here: the bounds on `headlines` (3-5) and
+`hashtags` (6-10) are, like the ones removed from `takeaways`, checked by Pydantic
+after the model has answered, because the structured-output API cannot enforce
+them. A bad count would raise and cost the post. It has not happened in roughly
+70 runs, so it was left alone rather than widening this change.
 
 ---
 

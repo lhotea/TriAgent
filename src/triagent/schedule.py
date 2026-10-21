@@ -50,12 +50,6 @@ DEFAULT_POST_DAYS = "Wed,Fri,Sat"
 # somewhat early, but never at an arbitrary hour.
 MAX_WAIT_SECONDS = 5 * 3600
 
-# A scheduled run that starts more than this long before its slot is not today's
-# run (see decide). An on-time start is about 6.7 hours before the slot in
-# winter, the earliest the cron allows, so this leaves room to move the slot
-# later in the evening without every run being taken for a stale one.
-STALE_RUN_SECONDS = 12 * 3600
-
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 _DAY_NAMES = {
@@ -75,6 +69,10 @@ _TIME_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*$")
 class Decision:
     post: bool
     reason: str
+
+
+class StaleRun(Exception):
+    """A scheduled run that started on the wrong day: the previous day's, delayed past midnight."""
 
 
 def parse_post_days(raw: str | None) -> tuple[str, ...]:
@@ -156,6 +154,46 @@ def seconds_until(now: dt.datetime, publish_at: dt.time, zone: ZoneInfo) -> floa
     return max(0.0, delta.total_seconds())
 
 
+def cron_start_time(cron: str | None, now: dt.datetime, zone: ZoneInfo) -> dt.time | None:
+    """The local time of day at which the cron that started this run fires, or None.
+
+    ``cron`` is GitHub's ``github.event.schedule``: the expression that triggered
+    this run, so there is nothing to keep in step with the workflow file. Only the
+    daily ``M H * * <dow>`` shape is understood; anything else gives None, and a
+    check that cannot be made lets the run through rather than skipping it.
+    """
+    parts = (cron or "").split()
+    if len(parts) != 5 or parts[2] != "*" or parts[3] != "*":
+        return None
+    minute, hour = parts[0], parts[1]
+    if not (minute.isdigit() and hour.isdigit()):
+        return None
+    if not (0 <= int(minute) < 60 and 0 <= int(hour) < 24):
+        return None
+    fired = _aware(now).astimezone(dt.timezone.utc).replace(
+        hour=int(hour), minute=int(minute), second=0, microsecond=0
+    )
+    return fired.astimezone(zone).time()
+
+
+def started_before_cron(now: dt.datetime, cron_time: dt.time | None, zone: ZoneInfo) -> bool:
+    """True if ``now`` falls earlier in the local day than the cron's own start time.
+
+    GitHub starts a scheduled run at the cron time or *later*, never earlier — so
+    a run that begins before that time of day, locally, is the previous day's run,
+    delayed past local midnight. Left alone it would read as the next weekday: it
+    would pass that day's gate, hold for the five-hour cap and publish at dawn, and
+    that day's own run would then post again.
+
+    Measured against the cron rather than the slot, so it holds for any time zone
+    and any PUBLISH_AT. (A rule based on how far away the slot is would skip every
+    run for anyone whose cron-to-slot span exceeded its limit.)
+    """
+    if cron_time is None:
+        return False
+    return _aware(now).astimezone(zone).time() < cron_time
+
+
 def decide(env: Mapping[str, str], now: dt.datetime | None = None) -> Decision:
     """Should this run post today?
 
@@ -172,20 +210,19 @@ def decide(env: Mapping[str, str], now: dt.datetime | None = None) -> Decision:
     # Validated here although only the wait step uses it. Left to that step, a
     # typo in PUBLISH_AT would fail the run after the build — hours before the
     # post — instead of immediately, while there is still time to fix it.
-    publish_at = parse_publish_at(env.get("PUBLISH_AT"))
+    parse_publish_at(env.get("PUBLISH_AT"))
     moment = now or dt.datetime.now(dt.timezone.utc)
 
-    # The cron fires hours before the slot, so a run that starts long before its
-    # slot is not today's. GitHub can delay a scheduled run past local midnight;
-    # then Thursday's run reads "Friday", passes a Friday gate, and publishes at
-    # the 5-hour cap — 05:40 — after which Friday's own run posts again at 19:00.
-    # Skipping it loses at most the delayed day's post, which was already hopeless.
-    ahead = seconds_until(moment, publish_at, zone)
-    if ahead > STALE_RUN_SECONDS:
+    # GitHub can delay a scheduled run past local midnight. Thursday's run then
+    # reads "Friday". Skipping it loses at most the delayed day's post, which was
+    # already hopeless; Friday's own run will post.
+    cron_time = cron_start_time(env.get("CRON"), moment, zone)
+    if started_before_cron(moment, cron_time, zone):
+        local = moment.astimezone(zone)
         return Decision(
             False,
-            f"started {_fmt(ahead)} before the {publish_at.strftime('%H:%M')} slot: "
-            "this is the previous day's run, delayed past midnight; "
+            f"started at {local:%H:%M} local, before this workflow's {cron_time:%H:%M} "
+            "start time: the previous day's run, delayed past midnight; "
             "today's own run will post",
         )
 
@@ -212,6 +249,7 @@ def wait_for_publish_time(
     publish_at: dt.time,
     zone: ZoneInfo,
     *,
+    cron_time: dt.time | None = None,
     max_wait: float = MAX_WAIT_SECONDS,
     clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.timezone.utc),
     sleep: Callable[[float], None] = time.sleep,
@@ -225,8 +263,19 @@ def wait_for_publish_time(
 
     A slot that has already passed returns immediately — a run that started late
     publishes late rather than waiting a further day.
+
+    Raises StaleRun if the clock has crossed local midnight since the gate passed
+    (see started_before_cron). The gate decides once, at the start of the run;
+    a run that builds across midnight would otherwise look at "today" again here,
+    find tomorrow's slot, and hold for the cap before publishing at dawn.
     """
     start = clock()
+    if started_before_cron(start, cron_time, zone):
+        raise StaleRun(
+            f"it is {start.astimezone(zone):%H:%M} local, before this workflow's "
+            f"{cron_time:%H:%M} start time: the run crossed local midnight while "
+            "building, so it is no longer the day it was started for; not posting"
+        )
     remaining = seconds_until(start, publish_at, zone)
     if remaining <= 0:
         log.info(

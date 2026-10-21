@@ -154,36 +154,65 @@ class TestDecide:
         with pytest.raises(ValueError, match="POST_DAYS"):
             sch.decide({**self.SCHEDULED, "POST_DAYS": "Wed,Frid"})
 
+    CRON = "17 11 * * *"  # daily-post.yml's cron: 13:17 Zurich in summer, 12:17 in winter
+
     def test_a_run_delayed_past_midnight_is_skipped_not_posted_at_dawn(self):
         """Thursday's cron started 00:30 Friday (22:30 UTC Thursday). It reads 'Friday', passes
-        a Friday gate, and would publish at the 5h cap — 05:40 — before Friday's own run
+        a Friday gate, and would hold the 5h cap and publish at 05:40 — before Friday's own run
         posts again at 19:00."""
-        env = {**self.SCHEDULED, "POST_DAYS": "Fri"}
+        env = {**self.SCHEDULED, "POST_DAYS": "Fri", "CRON": self.CRON}
         d = sch.decide(env, now=utc(2026, 10, 22, 22, 30))
         assert not d.post
-        assert "previous day's run" in d.reason and "18h30m" in d.reason
+        assert "00:30" in d.reason and "13:17" in d.reason and "previous day's run" in d.reason
 
     def test_an_on_time_start_is_not_mistaken_for_a_stale_one(self):
-        """The cron's own start (11:17 UTC) is 5h43m before a 19:00 CEST slot in summer and
-        6h43m in winter — well inside the limit."""
-        env = {**self.SCHEDULED, "POST_DAYS": "Wed"}
+        """The cron's own start is the earliest a run can begin, so it must pass — in summer
+        (13:17 local) and in winter (12:17 local)."""
+        env = {**self.SCHEDULED, "POST_DAYS": "Wed", "CRON": self.CRON}
         assert sch.decide(env, now=utc(2026, 8, 5, 11, 17)).post      # summer, a Wednesday
         assert sch.decide(env, now=utc(2026, 12, 2, 11, 17)).post     # winter, a Wednesday
 
-    def test_exactly_twelve_hours_before_the_slot_is_still_todays_run(self):
-        env = {**self.SCHEDULED, "POST_DAYS": "Wed"}
-        assert sch.decide(env, now=utc(2026, 10, 21, 5, 0)).post      # 07:00 CEST, slot 19:00
-        assert not sch.decide(env, now=utc(2026, 10, 21, 4, 59)).post  # a minute earlier
+    def test_a_late_start_the_same_evening_is_still_todays_run(self):
+        env = {**self.SCHEDULED, "POST_DAYS": "Wed", "CRON": self.CRON}
+        assert sch.decide(env, now=utc(2026, 10, 21, 21, 40)).post    # 23:40 local, before midnight
+
+    def test_one_minute_before_the_crons_own_time_is_stale(self):
+        env = {**self.SCHEDULED, "POST_DAYS": "Wed", "CRON": self.CRON}
+        assert not sch.decide(env, now=utc(2026, 10, 21, 11, 16)).post
+        assert sch.decide(env, now=utc(2026, 10, 21, 11, 17)).post
+
+    def test_the_cron_time_follows_daylight_saving(self):
+        """The cron is fixed in UTC, so its local time moves with the clocks."""
+        zone = sch.load_zone("Europe/Zurich")
+        assert sch.cron_start_time("17 11 * * *", utc(2026, 8, 5, 12, 0), zone) == dt.time(13, 17)
+        assert sch.cron_start_time("17 11 * * *", utc(2026, 12, 2, 12, 0), zone) == dt.time(12, 17)
 
     def test_a_manual_run_at_any_hour_is_never_stale(self):
-        env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "POST_DAYS": "Fri"}
+        env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "POST_DAYS": "Fri", "CRON": ""}
         assert sch.decide(env, now=utc(2026, 10, 22, 22, 30)).post
 
-    def test_a_later_slot_does_not_make_every_run_look_stale(self):
-        """Someone moves PUBLISH_AT to 21:00 without moving the cron: an on-time start is 8h43m
-        before the slot, which must still count as today's run."""
-        env = {**self.SCHEDULED, "POST_DAYS": "Wed", "PUBLISH_AT": "21:00"}
-        assert sch.decide(env, now=utc(2026, 8, 5, 11, 17)).post
+    def test_it_holds_in_time_zones_far_from_zurich_where_a_distance_rule_failed(self):
+        """A rule based on how far away the slot is skipped EVERY run in America/Chicago:
+        the cron (06:17 local) is 13h42m before a 19:00 slot. Measured against the cron
+        itself, an on-time run passes there and a delayed-past-midnight run does not."""
+        env = {**self.SCHEDULED, "POST_DAYS": "Wed", "POST_TZ": "America/Chicago", "CRON": self.CRON}
+        assert sch.decide(env, now=utc(2026, 10, 21, 11, 17)).post     # 06:17 CDT, on time
+        assert not sch.decide(env, now=utc(2026, 10, 21, 7, 0)).post   # 02:00 CDT, stale
+
+    def test_a_late_slot_or_an_odd_one_does_not_change_the_answer(self):
+        for slot in ("12:00", "19:00", "23:30"):
+            env = {**self.SCHEDULED, "POST_DAYS": "Wed", "PUBLISH_AT": slot, "CRON": self.CRON}
+            assert sch.decide(env, now=utc(2026, 8, 5, 11, 17)).post, slot
+
+    @pytest.mark.parametrize("cron", ["", "garbage", "*/15 * * * *", "17 11 1 * *", "17 99 * * *", "61 11 * * *"])
+    def test_a_cron_it_cannot_read_lets_the_run_through(self, cron):
+        """A check that cannot be made must not turn into a missed post."""
+        env = {**self.SCHEDULED, "POST_DAYS": "Fri", "CRON": cron}
+        assert sch.decide(env, now=utc(2026, 10, 22, 22, 30)).post
+
+    def test_a_cron_with_a_weekday_restriction_is_still_understood(self):
+        zone = sch.load_zone("Europe/Zurich")
+        assert sch.cron_start_time("17 11 * * 1-5", utc(2026, 8, 5, 12, 0), zone) == dt.time(13, 17)
 
     def test_a_bad_publish_time_is_caught_before_anything_is_built(self):
         """Otherwise it would surface after the build, hours before the post."""
@@ -247,9 +276,34 @@ class TestWaitForPublishTime:
         assert len(clock.sleeps) == 1
 
 
+class TestStaleRunInTheWaitStep:
+    """The gate decides 'today' once. A run that builds across local midnight must not decide again."""
+
+    def test_a_run_that_has_crossed_midnight_since_the_gate_is_refused(self):
+        """Gate passed at 23:56 Wednesday (the slot had already gone); the build ran on, and the
+        wait starts at 00:04 Thursday — when 'today's slot' means Thursday 19:00, 18h away."""
+        clock = FakeClock(utc(2026, 10, 21, 22, 4))  # 00:04 CEST Thursday
+        with pytest.raises(sch.StaleRun, match="crossed local midnight"):
+            sch.wait_for_publish_time(
+                dt.time(19, 0), ZURICH, cron_time=dt.time(13, 17), clock=clock, sleep=clock.sleep
+            )
+        assert clock.sleeps == []  # it did not wait first
+
+    def test_a_normal_start_is_unaffected(self):
+        clock = FakeClock(utc(2026, 8, 5, 14, 0))  # 16:00 CEST
+        waited = sch.wait_for_publish_time(
+            dt.time(19, 0), ZURICH, cron_time=dt.time(13, 17), clock=clock, sleep=clock.sleep
+        )
+        assert waited == 3 * 3600
+
+    def test_without_a_cron_the_check_cannot_be_made_and_the_run_proceeds(self):
+        clock = FakeClock(utc(2026, 10, 21, 22, 4))
+        sch.wait_for_publish_time(dt.time(19, 0), ZURICH, cron_time=None, clock=clock, sleep=clock.sleep)
+
+
 def run_main(monkeypatch, capsys, mode, env):
     monkeypatch.setattr(sys, "argv", ["triagent", "--mode", mode])
-    for key in ("GITHUB_EVENT_NAME", "POST_DAYS", "POST_TZ", "PUBLISH_AT"):
+    for key in ("GITHUB_EVENT_NAME", "POST_DAYS", "POST_TZ", "PUBLISH_AT", "CRON"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
@@ -313,3 +367,27 @@ class TestWaitMode:
             {"GITHUB_EVENT_NAME": "schedule", "PUBLISH_AT": "late"},
         )
         assert code == 2 and "PUBLISH_AT" in err
+
+
+    def test_a_stale_run_fails_without_waiting(self, monkeypatch, capsys):
+        """Exit 1, not 2: it is not a config error, and a red run is the honest record that
+        the day's post did not go out."""
+        monkeypatch.setattr(
+            sch, "wait_for_publish_time",
+            lambda *a, **k: (_ for _ in ()).throw(sch.StaleRun("crossed midnight")),
+        )
+        code, _, err = run_main(
+            monkeypatch, capsys, "wait", {"GITHUB_EVENT_NAME": "schedule", "CRON": "17 11 * * *"}
+        )
+        assert code == 1 and "stale run: crossed midnight" in err
+
+    def test_the_cron_reaches_the_wait_step(self, monkeypatch, capsys):
+        seen = {}
+
+        def fake_wait(publish_at, zone, **kwargs):
+            seen.update(kwargs)
+            return 0.0
+
+        monkeypatch.setattr(sch, "wait_for_publish_time", fake_wait)
+        run_main(monkeypatch, capsys, "wait", {"GITHUB_EVENT_NAME": "schedule", "CRON": "17 11 * * *"})
+        assert isinstance(seen["cron_time"], dt.time)

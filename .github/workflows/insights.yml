@@ -102,14 +102,14 @@ jobs:
               # failed, or two overlapping runs), and publishing it would
               # destroy the real one. Refuse; a red run is recoverable.
               if [ -f "${name}" ]; then
-                remote_lines=$(wc -l < "${name}")
-                local_lines=$(wc -l < "../assets/${name}")
+                remote_lines=$(wc -l < "${name}") || return 1
+                local_lines=$(wc -l < "../assets/${name}") || return 1
                 if [ "${local_lines}" -lt "${remote_lines}" ]; then
                   echo "refusing to publish ${name}: ${local_lines} lines would replace ${remote_lines}" >&2
                   return 1
                 fi
               fi
-              cp "../assets/${name}" "${name}"
+              cp "../assets/${name}" "${name}" || return 1
             done
           }
           gh_pages_commit_and_push "insights: $(date -u +%F)" apply_csvs

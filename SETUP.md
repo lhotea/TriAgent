@@ -611,10 +611,13 @@ Things that follow from the run holding for hours:
   are not queued.
 - A build failure (an empty story pool, a blocked feed) now appears around
   midday rather than at posting time.
-- A run that GitHub starts more than 12 hours before its slot — a day's run
-  delayed past local midnight — is skipped by the gate. Left alone it would read
-  as the next weekday and publish at dawn, and that day's own run would then post
-  again.
+- A run GitHub starts earlier in the local day than the cron's own time (13:17
+  Zurich in summer) is a day's run delayed past local midnight, and is skipped by
+  the gate; a run that crosses midnight *while building* fails at the wait step
+  for the same reason. Left alone it would read as the next weekday and publish
+  at dawn, and that day's own run would then post again. The comparison uses the
+  cron that actually started the run (`github.event.schedule`), so it holds in any
+  time zone and for any `PUBLISH_AT`.
 - **If *Record posted stories* fails, the post is already live.** The error says
   so and lists the story URLs. Do not use "Re-run failed jobs": that publishes
   again. Add the URLs to `posted.json` on the `gh-pages` branch by hand instead.

@@ -72,12 +72,17 @@ jobs:
       # A typo in POST_DAYS / POST_TZ / PUBLISH_AT fails this step, and with it
       # the run, rather than quietly turning into "never post" or "post daily".
       # Manual runs always post: they are somebody asking for a post right now.
+      #
+      # CRON is the expression that started this run (empty for a manual run). A
+      # run GitHub starts before that time of day, locally, is the previous day's
+      # run delayed past midnight, and is skipped.
       - name: Is today a posting day?
         id: decide
         env:
           POST_DAYS: ${{ vars.POST_DAYS }}
           POST_TZ: ${{ vars.POST_TZ }}
           PUBLISH_AT: ${{ vars.PUBLISH_AT }}
+          CRON: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
           # stdout is the single `post=...` line; the reason goes to the log.
@@ -188,6 +193,10 @@ jobs:
         env:
           POST_TZ: ${{ vars.POST_TZ }}
           PUBLISH_AT: ${{ vars.PUBLISH_AT }}
+          # The gate decided "today" when the run started. A run that builds
+          # across local midnight would look at "today" again here and find
+          # tomorrow's slot, so this fails it instead.
+          CRON: ${{ github.event.schedule }}
         run: python -m triagent --mode wait
 
       - name: Publish card to gh-pages
@@ -209,9 +218,10 @@ jobs:
             # naming each file explicitly here means a change in the Python has
             # to be mirrored in this YAML — which is exactly how run #125
             # published a card the publisher then waited 300s for and never
-            # found. (Runs inside gh-pages-wt, hence the ../assets paths.)
-            cp ../assets/daily*.png .
-            cp ../assets/index.html .
+            # found. (Runs inside gh-pages-wt, hence the ../assets paths. Errexit
+            # is off in here, so every command that can fail is checked.)
+            cp ../assets/daily*.png . || return 1
+            cp ../assets/index.html . || return 1
             cp ../assets/daily*.mp4 . 2>/dev/null || true
             # Fail here rather than letting the publisher discover it 300s later.
             ls daily-*.png >/dev/null 2>&1 || {
