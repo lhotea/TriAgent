@@ -50,6 +50,12 @@ DEFAULT_POST_DAYS = "Wed,Fri,Sat"
 # somewhat early, but never at an arbitrary hour.
 MAX_WAIT_SECONDS = 5 * 3600
 
+# A scheduled run that starts more than this long before its slot is not today's
+# run (see decide). An on-time start is about 6.7 hours before the slot in
+# winter, the earliest the cron allows, so this leaves room to move the slot
+# later in the evening without every run being taken for a stale one.
+STALE_RUN_SECONDS = 12 * 3600
+
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 _DAY_NAMES = {
@@ -166,8 +172,24 @@ def decide(env: Mapping[str, str], now: dt.datetime | None = None) -> Decision:
     # Validated here although only the wait step uses it. Left to that step, a
     # typo in PUBLISH_AT would fail the run after the build — hours before the
     # post — instead of immediately, while there is still time to fix it.
-    parse_publish_at(env.get("PUBLISH_AT"))
-    today = weekday_name(now or dt.datetime.now(dt.timezone.utc), zone)
+    publish_at = parse_publish_at(env.get("PUBLISH_AT"))
+    moment = now or dt.datetime.now(dt.timezone.utc)
+
+    # The cron fires hours before the slot, so a run that starts long before its
+    # slot is not today's. GitHub can delay a scheduled run past local midnight;
+    # then Thursday's run reads "Friday", passes a Friday gate, and publishes at
+    # the 5-hour cap — 05:40 — after which Friday's own run posts again at 19:00.
+    # Skipping it loses at most the delayed day's post, which was already hopeless.
+    ahead = seconds_until(moment, publish_at, zone)
+    if ahead > STALE_RUN_SECONDS:
+        return Decision(
+            False,
+            f"started {_fmt(ahead)} before the {publish_at.strftime('%H:%M')} slot: "
+            "this is the previous day's run, delayed past midnight; "
+            "today's own run will post",
+        )
+
+    today = weekday_name(moment, zone)
     if today in days:
         return Decision(True, f"{today} is a posting day ({','.join(days)})")
     return Decision(

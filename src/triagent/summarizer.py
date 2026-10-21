@@ -78,16 +78,22 @@ class DailyBrief(BaseModel):
             "the lead story: the hook, takeaways and implication are all about it."
         ),
     )
+    # Deliberately not min_length / max_length. The structured-output API cannot
+    # enforce a maximum, so a bound here is checked by Pydantic *after* the model
+    # has answered — and a fourth takeaway, or none, would then raise and cost the
+    # day's post over a field that only decorates slide 2. build_brief clamps to
+    # three instead, and an empty list falls back to the older layout. An empty
+    # list is also what a thin summary should produce: forcing at least one
+    # would push the model to invent a fact.
     takeaways: List[str] = Field(
         ...,
-        min_length=1,
-        max_length=3,
         description=(
-            "The facts of the LEAD story, for the second slide: one per line, most "
-            "important first, each under 14 words. Use ONLY facts stated in that "
-            "story's summary — names, numbers, dates, outcomes. If the summary "
-            "holds fewer than three distinct facts, give fewer; never pad, estimate, "
-            "round up or infer a figure. Not first person."
+            "The facts of the LEAD story, for the second slide: up to three, one "
+            "per line, most important first, each under 14 words. Use ONLY facts "
+            "stated in that story's summary — names, numbers, dates, outcomes. If "
+            "the summary holds fewer than three distinct facts, give fewer — an "
+            "empty list is better than padding. Never estimate, round up or infer "
+            "a figure. Not first person."
         ),
     )
     implication: str = Field(
@@ -303,9 +309,22 @@ class Summarizer:
             raise RuntimeError(
                 f"structured parse failed; stop_reason={response.stop_reason}"
             )
+
+        # Slides 2 and 3 are an improvement, not the product: normalise what the
+        # model gave rather than failing the post over it. The renderer falls back
+        # to the older layout for whatever is missing, and the log says so — a
+        # silent fallback would hide that the better format is not being used.
+        brief.takeaways = [t.strip() for t in brief.takeaways if t and t.strip()][:3]
+        brief.implication = (brief.implication or "").strip()
+        if not brief.takeaways:
+            log.warning("the model gave no takeaways; slides 2-3 use the older layout")
+        elif not brief.implication:
+            log.warning("the model gave no implication; slide 3 uses the older layout")
+
         log.info(
-            "brief built: %d headlines, %d hashtags",
+            "brief built: %d headlines, %d takeaways, %d hashtags",
             len(brief.headlines),
+            len(brief.takeaways),
             len(brief.hashtags),
         )
         return brief

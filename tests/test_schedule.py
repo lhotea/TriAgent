@@ -154,6 +154,37 @@ class TestDecide:
         with pytest.raises(ValueError, match="POST_DAYS"):
             sch.decide({**self.SCHEDULED, "POST_DAYS": "Wed,Frid"})
 
+    def test_a_run_delayed_past_midnight_is_skipped_not_posted_at_dawn(self):
+        """Thursday's cron started 00:30 Friday (22:30 UTC Thursday). It reads 'Friday', passes
+        a Friday gate, and would publish at the 5h cap — 05:40 — before Friday's own run
+        posts again at 19:00."""
+        env = {**self.SCHEDULED, "POST_DAYS": "Fri"}
+        d = sch.decide(env, now=utc(2026, 10, 22, 22, 30))
+        assert not d.post
+        assert "previous day's run" in d.reason and "18h30m" in d.reason
+
+    def test_an_on_time_start_is_not_mistaken_for_a_stale_one(self):
+        """The cron's own start (11:17 UTC) is 5h43m before a 19:00 CEST slot in summer and
+        6h43m in winter — well inside the limit."""
+        env = {**self.SCHEDULED, "POST_DAYS": "Wed"}
+        assert sch.decide(env, now=utc(2026, 8, 5, 11, 17)).post      # summer, a Wednesday
+        assert sch.decide(env, now=utc(2026, 12, 2, 11, 17)).post     # winter, a Wednesday
+
+    def test_exactly_twelve_hours_before_the_slot_is_still_todays_run(self):
+        env = {**self.SCHEDULED, "POST_DAYS": "Wed"}
+        assert sch.decide(env, now=utc(2026, 10, 21, 5, 0)).post      # 07:00 CEST, slot 19:00
+        assert not sch.decide(env, now=utc(2026, 10, 21, 4, 59)).post  # a minute earlier
+
+    def test_a_manual_run_at_any_hour_is_never_stale(self):
+        env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "POST_DAYS": "Fri"}
+        assert sch.decide(env, now=utc(2026, 10, 22, 22, 30)).post
+
+    def test_a_later_slot_does_not_make_every_run_look_stale(self):
+        """Someone moves PUBLISH_AT to 21:00 without moving the cron: an on-time start is 8h43m
+        before the slot, which must still count as today's run."""
+        env = {**self.SCHEDULED, "POST_DAYS": "Wed", "PUBLISH_AT": "21:00"}
+        assert sch.decide(env, now=utc(2026, 8, 5, 11, 17)).post
+
     def test_a_bad_publish_time_is_caught_before_anything_is_built(self):
         """Otherwise it would surface after the build, hours before the post."""
         with pytest.raises(ValueError, match="PUBLISH_AT"):

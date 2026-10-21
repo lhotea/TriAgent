@@ -403,6 +403,50 @@ def _has_meaning(brief: DailyBrief) -> bool:
     return _has_details(brief) and bool((getattr(brief, "implication", "") or "").strip())
 
 
+def _split_long_words(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> str:
+    """Break any single word wider than ``max_width`` so wrapping can contain it.
+
+    `_wrap` can only break between words, so an unbroken token — a URL, a long
+    compound — is placed on a line of its own and runs off the canvas. Text here
+    comes from a model summarising feeds, so one will turn up eventually.
+    """
+    out: list[str] = []
+    for word in text.split():
+        if draw.textlength(word, font=font) <= max_width:
+            out.append(word)
+            continue
+        chunk = ""
+        for ch in word:
+            if chunk and draw.textlength(chunk + ch, font=font) > max_width:
+                out.append(chunk)
+                chunk = ch
+            else:
+                chunk += ch
+        if chunk:
+            out.append(chunk)
+    return " ".join(out)
+
+
+def _fit_one_line(
+    draw: ImageDraw.ImageDraw, text: str, max_width: int, *, start: int = 26, floor: int = 18
+) -> tuple[str, ImageFont.FreeTypeFont]:
+    """Largest bold size from ``start`` down to ``floor`` at which ``text`` fits one line.
+
+    Below the floor the text is cut with an ellipsis. The source credit is the
+    RSS feed's own title, which is whatever the publisher called it —
+    "Triathlon News | 220 Triathlon - Britain's leading triathlon magazine" is a
+    real shape — and a credit that runs off the edge is worse than a short one.
+    """
+    for size in range(start, floor - 1, -2):
+        font = _load_font(size, bold=True)
+        if draw.textlength(text, font=font) <= max_width:
+            return text, font
+    font = _load_font(floor, bold=True)
+    while text and draw.textlength(text + "\u2026", font=font) > max_width:
+        text = text[:-1]
+    return text.rstrip() + "\u2026", font
+
+
 def _draw_details(draw: ImageDraw.ImageDraw, brief: DailyBrief, w: int, h: int) -> None:
     """Slide 2: the lead story's facts, numbered, with the publication credited.
 
@@ -426,7 +470,10 @@ def _draw_details(draw: ImageDraw.ImageDraw, brief: DailyBrief, w: int, h: int) 
     # down from big, because the point is that it reads at thumbnail distance.
     for size in range(58, 33, -2):
         font = _load_font(size, bold=True, condensed=True)
-        wrapped = [_wrap(draw, t, font, max_width) for t in items]
+        wrapped = [
+            _wrap(draw, _split_long_words(draw, t, font, max_width), font, max_width)
+            for t in items
+        ]
         line_h = int(size * 1.2)
         height = sum(len(lines) for lines in wrapped) * line_h + gap * (len(items) - 1)
         if height <= bottom - top and all(len(lines) <= 4 for lines in wrapped):
@@ -443,12 +490,8 @@ def _draw_details(draw: ImageDraw.ImageDraw, brief: DailyBrief, w: int, h: int) 
 
     source = (brief.headlines[0].source if brief.headlines else "").strip()
     if source:
-        draw.text(
-            (MARGIN, bottom + 14),
-            f"SOURCE: {source.upper()}",
-            fill=ACCENT,
-            font=_load_font(26, bold=True),
-        )
+        credit, credit_font = _fit_one_line(draw, f"SOURCE: {source.upper()}", w - 2 * MARGIN)
+        draw.text((MARGIN, bottom + 14), credit, fill=ACCENT, font=credit_font)
 
 
 def _draw_meaning(draw: ImageDraw.ImageDraw, brief: DailyBrief, w: int, h: int) -> None:
@@ -465,7 +508,9 @@ def _draw_meaning(draw: ImageDraw.ImageDraw, brief: DailyBrief, w: int, h: int) 
     text = brief.implication.strip()
     for size in range(80, 39, -4):
         font = _load_font(size, bold=True, condensed=True)
-        lines = _wrap(draw, text, font, w - 2 * MARGIN)
+        lines = _wrap(
+            draw, _split_long_words(draw, text, font, w - 2 * MARGIN), font, w - 2 * MARGIN
+        )
         line_h = int(size * 1.15)
         if len(lines) * line_h <= bottom - top and len(lines) <= 9:
             break

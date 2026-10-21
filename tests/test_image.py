@@ -303,3 +303,75 @@ class TestLeadStorySlides:
         paths = render_slides(sample_brief, "Brand", tmp_assets_dir, "daily-x", count=3)
         assert [p.name for p in paths] == ["daily-x-1.png", "daily-x-2.png", "daily-x-3.png"]
         assert all(p.stat().st_size > 1000 for p in paths)
+
+
+class TestSlideRobustness:
+    """Text on slides 2-3 comes from a model summarising feeds; it has to survive odd input."""
+
+    @staticmethod
+    def _right_margin_is_clear(img):
+        from triagent.image import MARGIN
+
+        w, h = img.size
+        # Below the header rule, above the footer band: nothing may reach the right margin.
+        strip = img.convert("L").crop((w - MARGIN + 2, 150, w, h - 150))
+        return strip.getextrema() == (0, 0)
+
+    def _slide(self, brief, index, tmp_assets_dir):
+        from PIL import Image
+
+        from triagent.image import render_slide
+
+        path = render_slide(brief, index, "Brand", tmp_assets_dir / f"s{index}.png")
+        return Image.open(path)
+
+    def test_a_long_feed_title_as_the_source_stays_inside_the_margin(self, tmp_assets_dir, sample_brief):
+        title = "Triathlon News | 220 Triathlon - Britain's leading triathlon magazine and website"
+        headlines = list(sample_brief.headlines)
+        headlines[0] = headlines[0].model_copy(update={"source": title})
+        brief = sample_brief.model_copy(update={"headlines": headlines})
+        with self._slide(brief, 1, tmp_assets_dir) as img:
+            assert self._right_margin_is_clear(img)
+
+    def test_the_source_credit_is_cut_with_an_ellipsis_only_when_it_cannot_fit(self, tmp_assets_dir):
+        from PIL import Image, ImageDraw
+
+        from triagent.image import _fit_one_line
+
+        draw = ImageDraw.Draw(Image.new("RGB", (1080, 100)))
+        short, _ = _fit_one_line(draw, "SOURCE: 220 TRIATHLON", 952)
+        assert short == "SOURCE: 220 TRIATHLON"
+        long, font = _fit_one_line(draw, "SOURCE: " + "WORD " * 40, 952)
+        assert long.endswith("…") and draw.textlength(long, font=font) <= 952
+
+    def test_an_unbroken_token_in_a_takeaway_is_broken_to_fit(self, tmp_assets_dir, sample_brief):
+        token = "https://www.220triathlon.com/news/" + "ironman-" * 8
+        brief = sample_brief.model_copy(update={"takeaways": [token, "A normal fact."]})
+        with self._slide(brief, 1, tmp_assets_dir) as img:
+            assert self._right_margin_is_clear(img)
+
+    def test_an_unbroken_token_in_the_implication_is_broken_to_fit(self, tmp_assets_dir, sample_brief):
+        brief = sample_brief.model_copy(update={"implication": "Read " + "x" * 90})
+        with self._slide(brief, 2, tmp_assets_dir) as img:
+            assert self._right_margin_is_clear(img)
+
+    def test_split_long_words_leaves_ordinary_text_alone(self):
+        from PIL import Image, ImageDraw
+
+        from triagent.image import _load_font, _split_long_words
+
+        draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+        font = _load_font(40, bold=True)
+        assert _split_long_words(draw, "a plain  sentence here", font, 900) == "a plain sentence here"
+
+    def test_split_long_words_never_loses_a_character(self):
+        from PIL import Image, ImageDraw
+
+        from triagent.image import _load_font, _split_long_words
+
+        draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+        font = _load_font(40, bold=True)
+        word = "abcdefghij" * 12
+        pieces = _split_long_words(draw, word, font, 300).split()
+        assert "".join(pieces) == word and len(pieces) > 1
+        assert all(draw.textlength(piece, font=font) <= 300 for piece in pieces)

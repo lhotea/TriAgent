@@ -125,6 +125,8 @@ def test_build_brief_success(sample_news_items):
     mock_response.parsed_output = MagicMock(spec=DailyBrief)
     mock_response.parsed_output.headlines = [MagicMock(spec=Headline)]
     mock_response.parsed_output.hashtags = ["tag1", "tag2", "tag3", "tag4", "tag5"]
+    mock_response.parsed_output.takeaways = ["A fact."]
+    mock_response.parsed_output.implication = "Check your plan."
     mock_response.stop_reason = "stop_sequence"
 
     with (
@@ -150,6 +152,8 @@ def test_build_brief_fallback_on_connection_error(sample_news_items):
     mock_response.parsed_output = MagicMock(spec=DailyBrief)
     mock_response.parsed_output.headlines = [MagicMock(spec=Headline)]
     mock_response.parsed_output.hashtags = ["tag1", "tag2", "tag3", "tag4", "tag5"]
+    mock_response.parsed_output.takeaways = ["A fact."]
+    mock_response.parsed_output.implication = "Check your plan."
     mock_response.stop_reason = "stop_sequence"
 
     with (
@@ -179,6 +183,8 @@ def test_build_brief_fallback_on_timeout(sample_news_items):
     mock_response.parsed_output = MagicMock(spec=DailyBrief)
     mock_response.parsed_output.headlines = [MagicMock(spec=Headline)]
     mock_response.parsed_output.hashtags = ["tag1", "tag2", "tag3", "tag4", "tag5"]
+    mock_response.parsed_output.takeaways = ["A fact."]
+    mock_response.parsed_output.implication = "Check your plan."
     mock_response.stop_reason = "stop_sequence"
 
     with (
@@ -206,6 +212,8 @@ def test_build_brief_fallback_on_rate_limit(sample_news_items):
     mock_response.parsed_output = MagicMock(spec=DailyBrief)
     mock_response.parsed_output.headlines = [MagicMock(spec=Headline)]
     mock_response.parsed_output.hashtags = ["tag1", "tag2", "tag3", "tag4", "tag5"]
+    mock_response.parsed_output.takeaways = ["A fact."]
+    mock_response.parsed_output.implication = "Check your plan."
     mock_response.stop_reason = "stop_sequence"
 
     with (
@@ -233,6 +241,8 @@ def test_build_brief_fallback_on_status_error(sample_news_items):
     mock_response.parsed_output = MagicMock(spec=DailyBrief)
     mock_response.parsed_output.headlines = [MagicMock(spec=Headline)]
     mock_response.parsed_output.hashtags = ["tag1", "tag2", "tag3", "tag4", "tag5"]
+    mock_response.parsed_output.takeaways = ["A fact."]
+    mock_response.parsed_output.implication = "Check your plan."
     mock_response.stop_reason = "stop_sequence"
 
     with (
@@ -264,6 +274,8 @@ def test_build_brief_stores_parsed_output(sample_news_items):
     expected_brief = MagicMock(spec=DailyBrief)
     expected_brief.headlines = [MagicMock(spec=Headline)]
     expected_brief.hashtags = ["tag1", "tag2", "tag3", "tag4", "tag5"]
+    expected_brief.takeaways = ["A fact."]
+    expected_brief.implication = "Check your plan."
 
     mock_response = MagicMock()
     mock_response.parsed_output = expected_brief
@@ -341,15 +353,22 @@ class TestLeadStoryFields:
         brief = DailyBrief(**self._kwargs(takeaways=["One.", "Two.", "Three."]))
         assert len(brief.takeaways) == 3
 
-    def test_takeaways_are_required_and_bounded(self):
-        with pytest.raises(Exception):
-            DailyBrief(**self._kwargs(takeaways=[]))  # slide 2 would be empty
-        with pytest.raises(Exception):
-            DailyBrief(**self._kwargs(takeaways=["a", "b", "c", "d"]))  # more than fits
+    def test_takeaways_are_required_but_not_bounded_by_the_schema(self):
+        """The API cannot enforce a maximum, so a Pydantic bound would be checked after the
+        model answered — and a fourth takeaway, or none, would cost the day's post. The bound
+        is applied by build_brief instead."""
+        assert DailyBrief(**self._kwargs(takeaways=[])).takeaways == []
+        assert len(DailyBrief(**self._kwargs(takeaways=["a", "b", "c", "d", "e"])).takeaways) == 5
         kwargs = self._kwargs()
         del kwargs["takeaways"]
         with pytest.raises(Exception):
             DailyBrief(**kwargs)
+
+    def test_the_schema_sent_to_the_model_has_no_item_bounds_on_takeaways(self):
+        from anthropic import transform_schema
+
+        prop = transform_schema(DailyBrief.model_json_schema())["properties"]["takeaways"]
+        assert "minItems" not in prop and "maxItems" not in prop
 
     def test_implication_is_required(self):
         kwargs = self._kwargs()
@@ -419,3 +438,54 @@ class TestPromptRules:
         excerpt = prompt.split("https://e/x")[0].rstrip().splitlines()[-1].strip()
         assert excerpt == "a" * 300 + "b" * (SUMMARY_CHARS - 300)
         assert "lead story" in prompt and "only source" in prompt
+
+
+class TestBriefNormalisation:
+    """Whatever the model returns for slides 2-3 must never cost the post."""
+
+    def _brief(self, **over):
+        return TestLeadStoryFields()._kwargs(**over)
+
+    def _build(self, brief, caplog):
+        import datetime as dt
+
+        from triagent.news import NewsItem
+
+        item = NewsItem(
+            title="T", summary="s", url="https://e/x", source="S",
+            published=dt.datetime.now(dt.timezone.utc),
+        )
+        client = MagicMock()
+        client.messages.parse.return_value = MagicMock(parsed_output=brief, stop_reason="end_turn")
+        with patch("triagent.summarizer.anthropic.Anthropic", return_value=client):
+            with caplog.at_level("WARNING", logger="triagent.summarizer"):
+                return Summarizer(api_key="k").build_brief([item], brand_name="B")
+
+    def test_more_than_three_takeaways_are_clamped_not_rejected(self, caplog):
+        brief = DailyBrief(**self._brief(takeaways=["one", "two", "three", "four", "five"]))
+        assert self._build(brief, caplog).takeaways == ["one", "two", "three"]
+
+    def test_blank_takeaways_and_stray_whitespace_are_removed(self, caplog):
+        brief = DailyBrief(**self._brief(takeaways=["  one  ", "", "   ", "two"]))
+        assert self._build(brief, caplog).takeaways == ["one", "two"]
+
+    def test_no_takeaways_is_logged_and_still_returns_a_brief(self, caplog):
+        """The older layout takes over — but quietly using it would hide that the better
+        format is not in use, so it is a warning."""
+        brief = DailyBrief(**self._brief(takeaways=[]))
+        assert self._build(brief, caplog).takeaways == []
+        assert any("no takeaways" in r.message for r in caplog.records)
+
+    def test_no_implication_is_logged_and_still_returns_a_brief(self, caplog):
+        brief = DailyBrief(**self._brief(implication="   "))
+        assert self._build(brief, caplog).implication == ""
+        assert any("no implication" in r.message for r in caplog.records)
+
+    def test_the_implication_is_trimmed(self, caplog):
+        brief = DailyBrief(**self._brief(implication="  Check your plan.  "))
+        assert self._build(brief, caplog).implication == "Check your plan."
+
+    def test_a_good_brief_logs_no_warning(self, caplog):
+        brief = DailyBrief(**self._brief(takeaways=["A fact."]))
+        self._build(brief, caplog)
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
