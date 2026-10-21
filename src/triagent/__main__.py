@@ -9,6 +9,41 @@ from .agent import build, publish_from_build, run
 from .config import Settings
 
 
+def _schedule_mode(mode: str) -> int:
+    """The `gate` and `wait` modes: when to post, not what.
+
+    Handled before Settings loads. They need no credentials, and a bad POST_DAYS
+    must fail the run that uses it without also breaking the insights or token
+    workflows, which read the same environment.
+    """
+    import os
+
+    from . import schedule
+
+    env = os.environ
+    try:
+        if mode == "gate":
+            decision = schedule.decide(env)
+            # stdout carries ONLY the output line, so a workflow can append it to
+            # $GITHUB_OUTPUT as-is; the reason is for the run log.
+            print(f"post={'true' if decision.post else 'false'}")
+            print(decision.reason, file=sys.stderr)
+            return 0
+
+        if not schedule.is_scheduled_run(env):
+            print("not a scheduled run: publishing immediately", file=sys.stderr)
+            return 0
+        waited = schedule.wait_for_publish_time(
+            schedule.parse_publish_at(env.get("PUBLISH_AT")),
+            schedule.load_zone(env.get("POST_TZ")),
+        )
+        print(f"held {waited / 60:.0f} min for the publish slot", file=sys.stderr)
+        return 0
+    except ValueError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="triagent")
     parser.add_argument(
@@ -16,12 +51,15 @@ def main() -> int:
         choices=[
             "full", "build", "publish", "whoami",
             "feedcheck", "apicheck", "refresh", "insights",
+            "gate", "wait",
         ],
         default="full",
         help=(
             "full: build + publish in one process. "
             "build: fetch news, render card, write caption to disk, do not post. "
-            "publish: read prebuilt card + caption from disk and post to Instagram."
+            "publish: read prebuilt card + caption from disk and post to Instagram. "
+            "gate: print post=true|false for whether a scheduled run should post today. "
+            "wait: hold until the configured publish time (scheduled runs only)."
         ),
     )
     parser.add_argument(
@@ -49,6 +87,9 @@ def main() -> int:
         level=getattr(logging, args.log_level),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    if args.mode in ("gate", "wait"):
+        return _schedule_mode(args.mode)
 
     try:
         settings = Settings.from_env()
